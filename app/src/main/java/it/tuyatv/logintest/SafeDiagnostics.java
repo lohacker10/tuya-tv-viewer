@@ -25,6 +25,6 @@ public final class SafeDiagnostics {
         filtered=EMAIL.matcher(filtered).replaceAll("[email omessa]");
         filtered=IPV4.matcher(filtered).replaceAll("[indirizzo omesso]");
         filtered=LONG_IDS.matcher(filtered).replaceAll("[identificativo omesso]");
-        return "Tuya TV Viewer diagnostica v"+version+"\\n"+filtered;
+        return "Tuya TV Viewer diagnostica v"+version+"\n"+filtered;
     }
 }
