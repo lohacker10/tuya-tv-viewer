@@ -182,6 +182,125 @@ final class TuyaClient {
         return false;
     }
 
+
+    /** A camera selection stays exclusively in the app's RAM. Never export IDs. */
+    static final class DeviceChoice {
+        final String id;
+        final String name;
+        final boolean online;
+        DeviceChoice(String id,String name,boolean online){
+            this.id=id;this.name=name;this.online=online;
+        }
+        @Override public String toString(){ return name+(online?"":" (offline)"); }
+    }
+
+    List<DeviceChoice> listDevicesForPreviewTest() throws Exception {
+        if(sid==null || ecode==null)throw new Exception("Esegui prima il login.");
+        List<JSONObject> entries=discoverDeviceRecords();
+        List<DeviceChoice> devices=new ArrayList<>();
+        for(JSONObject entry:entries){
+            if(devices.size()>=50)break;
+            String id=entry.optString("devId","");
+            if(id.isEmpty())continue;
+            String name=entry.optString("name","Dispositivo "+(devices.size()+1));
+            if(name.length()>55)name=name.substring(0,55)+"…";
+            devices.add(new DeviceChoice(id,name,entry.optBoolean("isOnline",true)));
+        }
+        return devices;
+    }
+
+    /**
+     * Diagnoses the *transport* of one selected IPC. No video data is received
+     * here: MQTT signaling, KCP handshake and H.264 decoding are not implemented.
+     * Never store or print the RTC secrets/relay addresses returned by Tuya.
+     */
+    Outcome probeOneCameraTransport(DeviceChoice device) throws Exception {
+        if(sid==null || ecode==null)throw new Exception("Esegui prima il login.");
+        if(device==null || device.id.isEmpty())throw new Exception("Seleziona un dispositivo.");
+        JSONObject query=new JSONObject();query.put("devId",device.id);
+        JSONObject rtc=call("m.ipc.v4.rtc.config.get","1.0",query);
+        StringBuilder out=new StringBuilder("TEST COLLEGAMENTO P2P\n");
+        out.append("Dispositivo: ").append(device.name).append('\n');
+        out.append("Config IPC: ✓ ricevuta\n");
+
+        JSONObject relay=findKeyObject(rtc,"tcpRelay");
+        if(relay==null){
+            out.append("Relay TCP: non indicato dal dispositivo.\n");
+            out.append("È necessario valutare un trasporto alternativo.\n");
+            return new Outcome(out.toString());
+        }
+
+        JSONArray urls=relay.optJSONArray("urls");
+        if(urls==null || urls.length()==0){
+            out.append("Relay TCP: endpoint assente\n");
+            return new Outcome(out.toString());
+        }
+
+        String endpoint=urls.optString(0,"");
+        String address=endpoint;
+        if(address.startsWith("tcp4:")||address.startsWith("tcp6:")){
+            address=address.substring(5);
+        }else if(address.startsWith("tcp:")){
+            address=address.substring(4);
+        }else{
+            out.append("Relay TCP: formato endpoint non supportato\n");
+            return new Outcome(out.toString());
+        }
+        int colon=address.lastIndexOf(':');
+        if(colon<1 || colon==address.length()-1){
+            out.append("Relay TCP: endpoint non valido\n");
+            return new Outcome(out.toString());
+        }
+        String host=address.substring(0,colon);
+        if(host.startsWith("[") && host.endsWith("]"))host=host.substring(1,host.length()-1);
+        int port;
+        try{port=Integer.parseInt(address.substring(colon+1));}
+        catch(NumberFormatException e){return new Outcome(out.append("Relay TCP: porta non valida\n").toString());}
+        if(port<1 || port>65535)throw new Exception("Porta relay non valida");
+        // The test is intentionally restricted to Tuya's publicly routable relay.
+        // No LAN/loopback probing of arbitrary hosts is permitted.
+        java.net.InetAddress ip=java.net.InetAddress.getByName(host);
+        if(ip.isSiteLocalAddress() || ip.isLinkLocalAddress() || ip.isLoopbackAddress() ||
+            ip.isMulticastAddress() || ip.isAnyLocalAddress()) {
+            out.append("Relay TCP: indirizzo non pubblico; test saltato per sicurezza.\n");
+            return new Outcome(out.toString());
+        }
+        out.append("Relay TCP: endpoint restituito da Tuya\n");
+        try(java.net.Socket socket=new java.net.Socket()){
+            socket.connect(new java.net.InetSocketAddress(ip,port),6000);
+            out.append("Connessione TCP: ✓ riuscita\n");
+        }catch(java.io.IOException e){
+            out.append("Connessione TCP: non riuscita (rete/relay)\n");
+        }
+        out.append("\nNON è ancora una diretta video: mancano segnalazione, ");
+        out.append("negoziazione KCP e decodifica del flusso.\n");
+        out.append("I dati riservati della sessione non vengono mostrati né inviati a GitHub.");
+        return new Outcome(out.toString());
+    }
+
+    private static JSONObject findKeyObject(Object data,String key){
+        if(data instanceof JSONObject){
+            JSONObject o=(JSONObject)data;
+            JSONObject direct=o.optJSONObject(key);
+            if(direct!=null)return direct;
+            JSONArray keys=o.names();
+            if(keys!=null)for(int i=0;i<keys.length();i++){
+                Object child=o.opt(keys.optString(i));
+                if(child instanceof JSONObject || child instanceof JSONArray){
+                    JSONObject found=findKeyObject(child,key);
+                    if(found!=null)return found;
+                }
+            }
+        } else if(data instanceof JSONArray){
+            JSONArray arr=(JSONArray)data;
+            for(int i=0;i<arr.length();i++){
+                JSONObject found=findKeyObject(arr.opt(i),key);
+                if(found!=null)return found;
+            }
+        }
+        return null;
+    }
+
     private static String normalizeMobile(String raw,String country) throws Exception {
         String p=raw.trim().replaceAll("[\\s\\-()]","");
         String prefix=country.replace("+","");
