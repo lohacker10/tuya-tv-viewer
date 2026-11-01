@@ -38,16 +38,22 @@ final class EncodedVideoDecoder {
             long pts=(System.nanoTime()/1000L);
             decoder.queueInputBuffer(input,0,accessUnit.length,pts,0);
             MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
+            boolean displayed=false;
             for(int i=0;i<8;i++){
-                int output=decoder.dequeueOutputBuffer(info,0);
+                int output=decoder.dequeueOutputBuffer(info,1000);
                 if(output>=0){
-                    decoder.releaseOutputBuffer(output,true);
-                    frameCount++;
+                    if(info.size>0){
+                        decoder.releaseOutputBuffer(output,true);
+                        frameCount++;
+                        displayed=true;
+                    }else{
+                        decoder.releaseOutputBuffer(output,false);
+                    }
                 } else if(output==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED){
-                    // The decoder reports the true dimensions when available.
+                    // True dimensions will be obtained from the input SPS/PPS.
                 } else break;
             }
-            return true;
+            return displayed;
         }catch(Exception e) {
             stop();
             return false;
