@@ -353,10 +353,19 @@ public final class MainActivity extends Activity {
     /** Receives a JPEG frame directly from Python's in-process P2P engine. */
     public final class VideoEvents {
         private long lastFrameAt=0;
-        public void onStatus(String description){
+        private final StringBuilder progress=new StringBuilder();
+        public String fetchRtcJson(String cameraId) throws Exception {
+            TuyaClient client=authenticated;
+            if(client==null)throw new Exception("Sessione Tuya scaduta");
+            return client.streamingRtcConfig(cameraId);
+        }
+        public synchronized void onStatus(String description){
+            if(progress.length()>1500)progress.delete(0,Math.max(0,progress.length()-1000));
+            progress.append("• ").append(description).append('\n');
+            final String msg="STREAM VIDEO (sperimentale)\n"+progress.toString();
             runOnUiThread(()->{
                 if(!isFinishing()&&!isDestroyed())
-                    setDiagnosticStatus("STREAM VIDEO (sperimentale)\\n"+description);
+                    setDiagnosticStatus(msg);
             });
         }
         public void onFrame(String jpegB64){

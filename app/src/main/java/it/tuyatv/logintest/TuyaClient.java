@@ -222,6 +222,14 @@ final class TuyaClient {
         return new Outcome(info.toString());
     }
 
+    /** Obtain a fresh RTC config through the already-working Tuya Smart gateway. */
+    String streamingRtcConfig(String cameraId) throws Exception {
+        if(sid==null || ecode==null)throw new Exception("Non autenticato");
+        JSONObject req=new JSONObject();
+        req.put("devId",cameraId);
+        return call("m.ipc.v4.rtc.config.get","1.0",req).toString();
+    }
+
     // P2P streaming accessors: session values remain in device RAM only.
     String streamingSid(){return sid;}
     String streamingEcode(){return ecode;}
