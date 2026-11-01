@@ -28,9 +28,9 @@ def _codec_annex_b(data):
     """Find obvious AVC/HEVC Annex B NALs without exporting media bytes."""
     # Some records have a small prefix before the first NAL.
     for i in range(min(96, max(len(data)-5, 0))):
-        if data[i:i+4] == b"\\x00\\x00\\x00\\x01":
+        if data[i:i+4] == b"\x00\x00\x00\x01":
             start=i+4
-        elif data[i:i+3] == b"\\x00\\x00\\x01":
+        elif data[i:i+3] == b"\x00\x00\x01":
             start=i+3
         else:
             continue
@@ -171,7 +171,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             try:
                 answer = await super()._async_await_answer()
             except Exception as exc:
-                match=re.search(r"close_reason=(\\d+)",str(exc))
+                match=re.search(r"close_reason=(\d+)",str(exc))
                 if match:
                     reason=int(match.group(1))
                     if reason==12:
@@ -222,7 +222,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                         self._frame_buffer=None
                         continue
                     if end>len(self._frame_buffer):
-                        self._frame_buffer.extend(b"\\x00"*(end-len(self._frame_buffer)))
+                        self._frame_buffer.extend(b"\x00"*(end-len(self._frame_buffer)))
                     self._frame_buffer[offset:end]=payload
             else:
                 # Different IPC revisions may not use the MJPEG packet marker.
