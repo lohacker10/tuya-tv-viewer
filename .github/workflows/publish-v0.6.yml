@@ -1,0 +1,39 @@
+name: Publish v0.6 direct video fix
+on:
+  push:
+    branches: [video-experiment]
+    paths: ['.github/workflows/publish-v0.6.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download successful v0.6 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 41314051503 --repo "$GITHUB_REPOSITORY" --name tuya-tv-video-experimental --dir dist
+          test -s dist/app-debug.apk
+          mv dist/app-debug.apk tuya-tv-viewer-v0.6.0.apk
+          sha256sum tuya-tv-viewer-v0.6.0.apk
+      - name: Publish immutable experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.6.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release exists, preserving existing asset."
+            exit 0
+          fi
+          gh release create v0.6.0 tuya-tv-viewer-v0.6.0.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target f62743a7dfc7f5bec4d4c3a8ac5d74f3ee10a2a4 \
+            --title "Tuya TV Viewer v0.6.0 — Prova diretta video P2P (RTC corretto)" \
+            --prerelease \
+            --notes "PROTOTIPO. Corregge la richiesta RTC usando il gateway Java Tuya Smart già verificato, poi tenta una sessione nativa P2P completa. Riporta le fasi effettive (MQTT, offerta/risposta SDP, relay, pacchetti video) con log copiabili senza chiavi o token. Tenta video JPEG/MJPEG, non garantisce video con telecamere H.264. Nome e package Android invariati. Firmato con chiave debug non persistente: potrebbe essere necessaria la disinstallazione della versione precedente. Android >=7, ABI ARM64."
