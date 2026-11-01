@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
 permissions:
-  contents: read
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -22,16 +22,33 @@ jobs:
           gradle-version: '8.10.2'
       - name: Use preinstalled Android SDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           test -d "$ANDROID_HOME"
           ls "$ANDROID_HOME/platforms"
-          ls "$ANDROID_HOME/build-tools"
       - name: Assemble debug APK
         run: gradle --no-daemon :app:assembleDebug
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-login-debug-apk
+          name: tuya-tv-p2p-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+      - name: Publish v0.3.0 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v0.3.0"
+          FILE="app/build/outputs/apk/debug/app-debug.apk"
+          ASSET="tuya-tv-p2p-test-v0.3.0.apk"
+          cp "$FILE" "$ASSET"
+          sha256sum "$ASSET"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Tuya TV Viewer v0.3.0 — Diagnostica singola telecamera" \
+              --prerelease \
+              --notes "Versione sperimentale Android TV: login Tuya Smart, scelta del dispositivo e prova di connessione TCP al relay P2P per una telecamera. NON include ancora lo streaming video. Nome e package invariati rispetto alla v0.2, ma le firme debug potrebbero differire: in quel caso disinstallare la precedente. Nessuna credenziale o identificativo personale è incluso."
+          fi
