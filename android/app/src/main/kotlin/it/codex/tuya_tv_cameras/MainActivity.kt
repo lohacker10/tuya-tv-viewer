@@ -76,7 +76,19 @@ class MainActivity : FlutterActivity() {
                         if (cameraIds == null) result.error("INVALID_CAMERAS", "Elenco telecamere non valido.", null)
                         else worker.execute {
                             try {
-                                bridge.callAttr("start_streams", org.json.JSONArray(cameraIds).toString())
+                                val idsJson = org.json.JSONArray(cameraIds).toString()
+                                try {
+                                    bridge.callAttr("start_streams", idsJson)
+                                } catch (expiredSession: Exception) {
+                                    val credentials = vault.read() ?: throw expiredSession
+                                    login(
+                                        credentials.username,
+                                        credentials.password,
+                                        credentials.countryCode,
+                                        credentials.region,
+                                    )
+                                    bridge.callAttr("start_streams", idsJson)
+                                }
                                 mainHandler.post { result.success(null) }
                             } catch (exception: Exception) {
                                 mainHandler.post { result.error("STREAM_START", safeMessage(exception), null) }

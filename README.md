@@ -1,6 +1,6 @@
 # Tuya TV beta
 
-App Flutter per Fire TV e Android TV: login Tuya con email oppure numero di telefono e password, accesso automatico con credenziali cifrate tramite Android Keystore, griglia 2×2 e selezione di una telecamera a schermo intero. La navigazione principale funziona con frecce e tasto OK del telecomando.
+App Flutter per Fire TV e Android TV: login Tuya con email oppure numero di telefono e password, accesso automatico con credenziali cifrate tramite Android Keystore, griglia 2×2 e selezione di una telecamera a schermo intero. Se l’avvio dello streaming fallisce, l’app prova una volta a rinnovare il login e riavviare le telecamere. La navigazione principale funziona con frecce e tasto OK del telecomando.
 
 ## Build
 

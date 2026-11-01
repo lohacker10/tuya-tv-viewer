@@ -1,7 +1,7 @@
 name: tuya_tv_cameras
 description: App Android TV per le telecamere Tuya.
 publish_to: none
-version: 0.11.0-beta.1+11
+version: 0.11.0-beta.2+12
 
 environment:
   sdk: ^3.11.1

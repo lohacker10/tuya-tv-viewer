@@ -45,22 +45,22 @@ jobs:
 
       - name: Name and checksum APK
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.1.apk
-          sha256sum tuya-tv-viewer-v0.11.0-beta.1.apk
+          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.2.apk
+          sha256sum tuya-tv-viewer-v0.11.0-beta.2.apk
 
       - name: Save APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-viewer-v0.11.0-beta.1
-          path: tuya-tv-viewer-v0.11.0-beta.1.apk
+          name: tuya-tv-viewer-v0.11.0-beta.2
+          path: tuya-tv-viewer-v0.11.0-beta.2.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish prerelease APK
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.11.0-beta.1
-          ASSET: tuya-tv-viewer-v0.11.0-beta.1.apk
+          TAG: v0.11.0-beta.2
+          ASSET: tuya-tv-viewer-v0.11.0-beta.2.apk
         run: |
           set -euo pipefail
           NOTES="Beta Flutter per Android TV e Fire TV: login Tuya, griglia live 2x2 e selezione a schermo intero. Login email o telefono/password; Android 7+ e dispositivi ARMv7/ARM64. La diretta è sperimentale: il protocollo indipendente è alpha, MJPEG è il percorso video implementato e H.264 non è verificato. Installazione con firma debug: per passare da un APK firmato diversamente può servire disinstallare la versione precedente."
@@ -72,6 +72,6 @@ jobs:
             fi
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta Flutter" \
+              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 2 Flutter" \
               --prerelease --notes "$NOTES"
           fi
