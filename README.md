@@ -1,16 +1,31 @@
-# Tuya TV Viewer — test di login
+# Tuya TV Viewer — prototipo Android TV
 
-Prototipo Android TV **non ufficiale** per verificare il login a **Tuya Smart** senza NAS.
+Progetto Android TV **non ufficiale** per telecamere associate a **Tuya Smart**. Nessun server locale, NAS o QR code.
 
-- Nessuna password, sessione, token, ID telecamera o dato personale è presente nel repository.
-- Le credenziali vengono inserite **esclusivamente sul dispositivo** e possono essere conservate cifrate tramite Android Keystore.
-- Questa versione non riproduce ancora il video: verifica soltanto l'autenticazione e, se disponibile, la lettura dei nomi dei dispositivi.
-- Il protocollo di autenticazione è sperimentale: un login rifiutato non implica necessariamente una password sbagliata.
+## Stato v0.3.0
 
-Per ottenere l'APK aprire la sezione **Actions** del repository e scaricare l'artifact della build `Build APK` completata. Il file `app-debug.apk` è un APK di test, non un'app pubblicata ufficialmente.
+- ✅ Login diretto Tuya Smart con credenziali digitate sulla stick
+- ✅ Salvataggio cifrato opzionale tramite Android Keystore
+- ✅ Scelta del dispositivo con telecomando
+- ✅ Test P2P/RTC e verifica di raggiungibilità **TCP del relay per una telecamera**
+- ⛔ Video live **non ancora disponibile**: la fase di segnalazione MQTT, il protocollo KCP, la decifratura dei frame e la decodifica video non sono ancora implementati
 
-## Avviso su compatibilità e sicurezza
+### Test
 
-I dettagli del protocollo mobile sono derivati dal progetto MIT [AboveColin/tuya-mobile](https://github.com/AboveColin/tuya-mobile). Le identità e le chiavi *dell'applicazione Tuya* pubblicate in quel progetto non sono credenziali del proprietario delle telecamere e possono cambiare. Nessun segreto personale deve essere inviato su GitHub, nei log Actions o nelle issue.
+Installa l'APK dalla [sezione Releases](https://github.com/lohacker10/tuya-tv-viewer/releases), avvia l'app, accedi a Tuya Smart, seleziona una telecamera e premi **TEST RELAY P2P**.
 
-Versione sperimentale per Android TV / Google TV (Android 6+). Non supporta captcha e MFA.
+Il test verifica la configurazione e la connessione TCP al relay Tuya. Un esito positivo **non** significa che la riproduzione video funzioni.
+
+## Aggiornamenti Android
+
+Il nome visibile e l'**applicationId** rimangono invariati rispetto alla v0.2 (`it.tuyatv.p2ptest`). Tuttavia, le build debug firmate sui runner GitHub possono usare **certificati diversi**. In quel caso Android non consente l'aggiornamento in-place: occorre disinstallare la versione precedente (perdendo le credenziali locali) e installare la nuova. Per un canale di release definitivo sarà predisposta una firma stabile e privata tramite GitHub Secrets, mai nel repository.
+
+## Sicurezza
+
+- Nessuna password, sessione, token, identificativo telecamera, chiave locale o dato del proprietario viene pubblicato nel repository.
+- Le credenziali sono inserite solo sul dispositivo, mai nel workflow o nei log Actions.
+- Le configurazioni P2P vengono usate solo in memoria, senza visualizzare o registrare token, host e chiavi.
+- L'identità **pubblica dell'applicazione Tuya** impiegata dal protocollo non rappresenta credenziali dell'utente.
+- Il codice del protocollo mobile usa quanto documentato dal progetto MIT [AboveColin/tuya-mobile](https://github.com/AboveColin/tuya-mobile), con attribuzione in `ATTRIBUTION.md`.
+
+Versione sperimentale per Android 6 o superiore. Account con MFA o CAPTCHA non supportati. Nessuna affiliazione a Tuya o Action/LSC.
