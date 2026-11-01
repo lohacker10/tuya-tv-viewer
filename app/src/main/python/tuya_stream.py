@@ -52,86 +52,6 @@ def _codec_annex_b(data):
     return None,None
 
 
-class RtpVideoBridge:
-    """Convert framed RTP H264/H265 NAL or FU packets into Annex B access units.
-
-    The source-specific envelope has to be identified first; use this parser
-    only on bytes which match RTP v2 and a plausible video NAL type.
-    """
-    def __init__(self):
-        self.rtp_count=0
-        self.fragmented=0
-        self.codec=None
-        self.fragment=None
-        self.last_seq=None
-
-    def parse(self, data):
-        for base in (0,4,8,12,16,20,24,28,32,40,48,64):
-            if len(data)<base+16 or data[base]>>6!=2:
-                continue
-            if data[base+1]&127 < 96:
-                continue
-            cc=data[base]&15
-            header=base+12+4*cc
-            if data[base] & 0x10:
-                if len(data)<header+4:continue
-                ext_words=int.from_bytes(data[header+2:header+4],"big")
-                if ext_words>32:continue
-                header+=4+4*ext_words
-            if header>=len(data):continue
-            raw=data[header:]
-            nal=raw[0]&31
-            hevc_type=(raw[0]>>1)&63
-            if nal not in tuple(range(1,24))+(24,28) and \
-               hevc_type not in tuple(range(0,48))+(49,):
-                continue
-            codec="avc" if nal in tuple(range(1,24))+(24,28) else "hevc"
-            seq=int.from_bytes(data[base+2:base+4],"big")
-            self.rtp_count+=1
-            if codec=="avc":
-                if nal==28 and len(raw)>=3:
-                    self.fragmented+=1
-                    start=bool(raw[1]&0x80)
-                    end=bool(raw[1]&0x40)
-                    if start:
-                        self.fragment=bytearray(b"\x00\x00\x00\x01"+
-                            bytes([(raw[0]&0xE0)|(raw[1]&0x1f)])+raw[2:])
-                    elif self.fragment is not None and (
-                        self.last_seq is None or seq==(self.last_seq+1)&65535):
-                        self.fragment.extend(raw[2:])
-                    else:
-                        self.fragment=None
-                    self.last_seq=seq
-                    if end and self.fragment is not None:
-                        frame=bytes(self.fragment)
-                        self.fragment=None
-                        return "avc",frame
-                    return codec,None
-                if nal==24:
-                    return codec,None
-            elif hevc_type==49 and len(raw)>=4:
-                self.fragmented+=1
-                start=bool(raw[2]&0x80)
-                end=bool(raw[2]&0x40)
-                if start:
-                    nal_header=bytes([((raw[0]&0x81)|((raw[2]&63)<<1)),raw[1]])
-                    self.fragment=bytearray(b"\x00\x00\x00\x01"+nal_header+raw[3:])
-                elif self.fragment is not None and (
-                    self.last_seq is None or seq==(self.last_seq+1)&65535):
-                    self.fragment.extend(raw[3:])
-                else:
-                    self.fragment=None
-                self.last_seq=seq
-                if end and self.fragment is not None:
-                    frame=bytes(self.fragment)
-                    self.fragment=None
-                    return "hevc",frame
-                return codec,None
-            self.last_seq=seq
-            return codec,b"\x00\x00\x00\x01"+raw
-        return None,None
-
-
 def _avcc_nal(data):
     """Recognize length-prefixed H.264/H.265 NAL units behind small headers."""
     for offset in (0,4,8,12,16,20,24,28,32,40,48,64):
@@ -179,6 +99,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
     from tuya_ipc_p2p_sdk.control import is_control
     from tuya_ipc_p2p_sdk.media import extract_media_packets
     from video_gate import VideoFormatGate
+    from rtp_transport import RtpVideoBridge
 
     tail = hashlib.md5(
         (hashlib.md5(client_id.encode()).hexdigest() + ecode).encode()
@@ -285,7 +206,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                     " | AES KO: "+str(self.aes_failed)+
                     " | controllo: "+str(self.control_records)+
                     " | chunk riconosciuti: "+str(self.packets_recognized)+
-                    " | RTP: "+str(self._rtp.rtp_count)+
+                    " | "+self._rtp.safe_stats()+
                     " | AnnexB: "+str(self.annexb_candidates)+
                     " | campioni H264/H265 verificati: "+str(self.video_samples)+
                     " | "+self._gate.safe_stats())
@@ -388,11 +309,16 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             else:
                 # Different IPC revisions may not use the MJPEG packet marker.
                 if not self._emit_video(decrypted):
-                    codec,sample=_avcc_nal(decrypted)
-                    if sample is None:
-                        codec,sample=self._rtp.parse(decrypted)
-                    if sample is not None:
-                        self._emit_encoded(codec,sample)
+                    # Only feed RTP to the decoder after 3 coherent packets
+                    # with matching SSRC, offset and sequential RTP IDs.
+                    validated=self._rtp.push(decrypted)
+                    if validated:
+                        for codec,nal in validated:
+                            self._emit_encoded(codec,nal)
+                    else:
+                        codec,sample=_avcc_nal(decrypted)
+                        if sample is not None:
+                            self._emit_encoded(codec,sample)
             super()._on_media_record(record)
 
     session = VisibleSession(config, identity, uid, on_frame)
