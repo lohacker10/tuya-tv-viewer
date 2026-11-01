@@ -4,7 +4,7 @@ android {
     namespace 'it.tuyatv.logintest'
     compileSdk 35
     defaultConfig {
-        applicationId 'it.tuyatv.logintest'
+        applicationId 'it.tuyatv.p2ptest'
         minSdk 23
         targetSdk 28
         versionCode 2
