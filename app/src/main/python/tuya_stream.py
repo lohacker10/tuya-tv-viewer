@@ -25,25 +25,112 @@ def _type(exc):
 
 
 def _codec_annex_b(data):
-    """Find obvious AVC/HEVC Annex B NALs without exporting media bytes."""
-    # Some records have a small prefix before the first NAL.
-    for i in range(min(96, max(len(data)-5, 0))):
-        if data[i:i+4] == b"\x00\x00\x00\x01":
-            start=i+4
-        elif data[i:i+3] == b"\x00\x00\x01":
-            start=i+3
-        else:
-            continue
-        if start>=len(data):
-            continue
-        b=data[start]
-        avc=b&31
-        hevc=(b>>1)&63
-        if avc in (1,5,6,7,8,9) and not (b&128):
-            return "avc",i
-        if hevc in (19,20,21,32,33,34,35,39,40) and not (b&128):
-            return "hevc",i
+    """Find Annex B NALs after a bounded proprietary media header."""
+    limit=min(len(data), 128 * 1024)
+    cursor=0
+    while cursor < limit - 5:
+        i=data.find(b"\x00\x00\x01",cursor,limit)
+        if i < 0:
+            return None,None
+        head=i+3
+        if head < limit and data[head] == 0:
+            if head+1 < limit and data[head+1] == 1:
+                head += 2
+            else:
+                cursor=i+3
+                continue
+        if head >= len(data):
+            return None,None
+        b=data[head]
+        if not (b & 0x80) and (b & 31) in (1,5,6,7,8,9):
+            return "avc", i
+        if not (b & 0x80) and head+1 < len(data) and \
+           ((b >> 1) & 63) in (19,20,21,32,33,34,35,39,40) and \
+           (data[head+1] & 7) != 0:
+            return "hevc", i
+        cursor=i+3
     return None,None
+
+
+class RtpVideoBridge:
+    """Convert framed RTP H264/H265 NAL or FU packets into Annex B access units.
+
+    The source-specific envelope has to be identified first; use this parser
+    only on bytes which match RTP v2 and a plausible video NAL type.
+    """
+    def __init__(self):
+        self.rtp_count=0
+        self.fragmented=0
+        self.codec=None
+        self.fragment=None
+        self.last_seq=None
+
+    def parse(self, data):
+        for base in (0,4,8,12,16,20,24,28,32,40,48,64):
+            if len(data)<base+16 or data[base]>>6!=2:
+                continue
+            if data[base+1]&127 < 96:
+                continue
+            cc=data[base]&15
+            header=base+12+4*cc
+            if data[base] & 0x10:
+                if len(data)<header+4:continue
+                ext_words=int.from_bytes(data[header+2:header+4],"big")
+                if ext_words>32:continue
+                header+=4+4*ext_words
+            if header>=len(data):continue
+            raw=data[header:]
+            nal=raw[0]&31
+            hevc_type=(raw[0]>>1)&63
+            if nal not in tuple(range(1,24))+(24,28) and \
+               hevc_type not in tuple(range(0,48))+(49,):
+                continue
+            codec="avc" if nal in tuple(range(1,24))+(24,28) else "hevc"
+            seq=int.from_bytes(data[base+2:base+4],"big")
+            self.rtp_count+=1
+            if codec=="avc":
+                if nal==28 and len(raw)>=3:
+                    self.fragmented+=1
+                    start=bool(raw[1]&0x80)
+                    end=bool(raw[1]&0x40)
+                    if start:
+                        self.fragment=bytearray(b"\x00\x00\x00\x01"+
+                            bytes([(raw[0]&0xE0)|(raw[1]&0x1f)])+raw[2:])
+                    elif self.fragment is not None and (
+                        self.last_seq is None or seq==(self.last_seq+1)&65535):
+                        self.fragment.extend(raw[2:])
+                    else:
+                        self.fragment=None
+                    self.last_seq=seq
+                    if end and self.fragment is not None:
+                        frame=bytes(self.fragment)
+                        self.fragment=None
+                        return "avc",frame
+                    return codec,None
+                if nal==24:
+                    return codec,None
+            elif hevc_type==49 and len(raw)>=4:
+                self.fragmented+=1
+                start=bool(raw[2]&0x80)
+                end=bool(raw[2]&0x40)
+                if start:
+                    nal_header=bytes([((raw[0]&0x81)|((raw[2]&63)<<1)),raw[1]])
+                    self.fragment=bytearray(b"\x00\x00\x00\x01"+nal_header+raw[3:])
+                elif self.fragment is not None and (
+                    self.last_seq is None or seq==(self.last_seq+1)&65535):
+                    self.fragment.extend(raw[3:])
+                else:
+                    self.fragment=None
+                self.last_seq=seq
+                if end and self.fragment is not None:
+                    frame=bytes(self.fragment)
+                    self.fragment=None
+                    return "hevc",frame
+                return codec,None
+            self.last_seq=seq
+            return codec,b"\x00\x00\x00\x01"+raw
+        return None,None
+
 
 def _rtc_dict(data):
     """Unwrap nested Tuya result structures without showing or logging secrets."""
