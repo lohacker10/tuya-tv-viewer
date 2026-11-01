@@ -5,6 +5,9 @@ on:
     branches: [main]
 permissions:
   contents: write
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -20,10 +23,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Use preinstalled Android SDK
-        run: |
-          test -d "$ANDROID_HOME"
-          ls "$ANDROID_HOME/platforms"
+      - name: Check installed Android SDK
+        run: test -d "$ANDROID_HOME"
       - name: Assemble debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK artifact
@@ -33,22 +34,21 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
-      - name: Publish v0.3.0 prerelease
+      - name: Publish v0.4.0 prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.3.0"
-          FILE="app/build/outputs/apk/debug/app-debug.apk"
-          ASSET="tuya-tv-p2p-test-v0.3.0.apk"
-          cp "$FILE" "$ASSET"
+          TAG="v0.4.0"
+          ASSET="tuya-tv-viewer-v0.4.0.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$ASSET"
           sha256sum "$ASSET"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "Tuya TV Viewer v0.3.0 — Diagnostica singola telecamera" \
-              --prerelease \
-              --notes "Versione sperimentale Android TV: login Tuya Smart, scelta del dispositivo e prova di connessione TCP al relay P2P per una telecamera. NON include ancora lo streaming video. Nome e package invariati rispetto alla v0.2, ma le firme debug potrebbero differire: in quel caso disinstallare la precedente. Nessuna credenziale o identificativo personale è incluso."
+            echo "Release already exists: refusing to overwrite an immutable version."
+            exit 1
           fi
+          gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Tuya TV Viewer v0.4.0 — Test MQTT e log copiabile" \
+            --prerelease \
+            --notes "APK sperimentale per Android TV. Login Tuya Smart, test configurazione IPC, relay TCP e autenticazione MQTT 3.1.1 su TLS, senza inviare offer SDP o aprire video. Pulsante COPIA LOG con oscuramento nomi e identificativi. Questa build NON riproduce ancora video. Stesso applicationId della v0.2/v0.3, ma firma debug variabile: se l'aggiornamento non è accettato da Android occorre disinstallare la build precedente. Nessuna credenziale, sessione o chiave utente pubblicata."
