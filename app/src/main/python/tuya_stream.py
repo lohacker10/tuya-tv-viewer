@@ -228,6 +228,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             self.media_records = 0
             self.aes_ok = 0
             self.aes_failed = 0
+            self.control_records = 0
             self.packets_recognized = 0
             self.video_samples = 0
             self.annexb_candidates = 0
@@ -267,6 +268,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             return ("Record canale: "+str(self.media_records)+
                     " | AES OK: "+str(self.aes_ok)+
                     " | AES KO: "+str(self.aes_failed)+
+                    " | controllo: "+str(self.control_records)+
                     " | chunk riconosciuti: "+str(self.packets_recognized)+
                     " | RTP: "+str(self._rtp.rtp_count)+
                     " | AnnexB: "+str(self.annexb_candidates)+
@@ -319,6 +321,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                 self.aes_failed += 1
                 return
             if is_control(decrypted):
+                self.control_records += 1
                 return
             packets=extract_media_packets(decrypted)
             self.packets_recognized += len(packets)
@@ -343,7 +346,9 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             else:
                 # Different IPC revisions may not use the MJPEG packet marker.
                 if not self._emit_video(decrypted):
-                    codec,sample=self._rtp.parse(decrypted)
+                    codec,sample=_avcc_nal(decrypted)
+                    if sample is None:
+                        codec,sample=self._rtp.parse(decrypted)
                     if sample is not None:
                         self._emit_encoded(codec,sample)
             super()._on_media_record(record)
