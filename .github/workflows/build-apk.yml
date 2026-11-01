@@ -41,6 +41,8 @@ jobs:
                       out.parent.mkdir(parents=True,exist_ok=True)
                       out.write_bytes(z.read(name))
           PY
+      - name: Check Python video engine syntax
+        run: python -m py_compile app/src/main/python/tuya_stream.py
       - name: Assemble debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK
