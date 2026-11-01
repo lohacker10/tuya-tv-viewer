@@ -4,9 +4,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
-import com.chaquo.python.AndroidPlatform
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
