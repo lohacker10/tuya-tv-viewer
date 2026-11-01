@@ -27,6 +27,20 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Vendor pinned MIT Tuya P2P Python package
+        run: |
+          python -m pip download --no-deps --only-binary=:all: -d /tmp/tuya_pkg 'tuya-ipc-p2p-sdk==0.1.1'
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          file = next(Path('/tmp/tuya_pkg').glob('tuya_ipc_p2p_sdk-*.whl'))
+          with ZipFile(file) as z:
+              for name in z.namelist():
+                  if name.startswith('tuya_ipc_p2p_sdk/') and not name.endswith('/'):
+                      out=Path('app/src/main/python') / name
+                      out.parent.mkdir(parents=True,exist_ok=True)
+                      out.write_bytes(z.read(name))
+          PY
       - name: Assemble debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK

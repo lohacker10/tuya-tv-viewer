@@ -16,6 +16,10 @@ android {
 chaquopy {
     defaultConfig {
         version = '3.12'
-        pip { install 'tuya-ipc-p2p-sdk==0.1.1' }
+        pip { 
+            install 'cryptography==42.0.8'
+            install 'aiohttp>=3.11'
+            install 'aiomqtt>=2.0'
+        }
     }
 }
