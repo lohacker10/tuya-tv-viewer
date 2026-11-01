@@ -194,6 +194,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
     events.onStatus("Configurazione RTC pronta. Apertura segnalazione MQTT…")
 
     first_frame = asyncio.Event()
+    encoded_sample = asyncio.Event()
 
     def on_frame(frame):
         if not _stopping.is_set():
@@ -214,22 +215,30 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             self.annexb_candidates = 0
             self._frame_buffer = None
             self._last_codec = None
+            self._rtp = RtpVideoBridge()
+
+        def _emit_encoded(self, codec, data):
+            if not codec or not data:
+                return
+            if self._last_codec != codec:
+                self._last_codec = codec
+                events.onStatus("Dati "+codec.upper()+
+                                " identificati: invio al decoder Android…")
+            try:
+                self.video_samples += 1
+                encoded_sample.set()
+                events.onEncodedFrame(codec, base64.b64encode(data).decode("ascii"))
+            except Exception:
+                pass
 
         def _emit_video(self, data):
             codec,start=_codec_annex_b(data)
-            if not codec or start is None:
-                return
+            if codec is None:
+                return False
             self.annexb_candidates += 1
-            if self._last_codec != codec:
-                self._last_codec = codec
-                events.onStatus("Rilevato flusso compatibile con "+codec.upper()+
-                                ": tentativo di decodifica hardware.")
-            try:
-                self.video_samples += 1
-                events.onEncodedFrame(codec, base64.b64encode(data[start:]).decode("ascii"))
-            except Exception:
-                # Preview callback is best-effort, must never block transport.
-                pass
+            # Keep the 00 00 01 Annex B start code; MediaCodec requires it.
+            self._emit_encoded(codec,data[start:])
+            return True
 
         def _flush_frame(self):
             if self._frame_buffer:
@@ -241,6 +250,8 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                     " | AES OK: "+str(self.aes_ok)+
                     " | AES KO: "+str(self.aes_failed)+
                     " | chunk riconosciuti: "+str(self.packets_recognized)+
+                    " | RTP: "+str(self._rtp.rtp_count)+
+                    " | AnnexB: "+str(self.annexb_candidates)+
                     " | campioni H264/H265: "+str(self.video_samples))
 
         async def _async_connect_signaling(self, session_id):
@@ -313,9 +324,10 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                     self._frame_buffer[offset:end]=payload
             else:
                 # Different IPC revisions may not use the MJPEG packet marker.
-                codec,start=_codec_annex_b(decrypted)
-                if codec and start is not None:
-                    self._emit_video(decrypted[start:])
+                if not self._emit_video(decrypted):
+                    codec,sample=self._rtp.parse(decrypted)
+                    if sample is not None:
+                        self._emit_encoded(codec,sample)
             super()._on_media_record(record)
 
     session = VisibleSession(config, identity, uid, on_frame)
@@ -336,16 +348,22 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             return
         try:
             wait_first = asyncio.create_task(first_frame.wait())
+            wait_encoded = asyncio.create_task(encoded_sample.wait())
             wait_stop = asyncio.create_task(_stopping.wait())
             wait_close = asyncio.create_task(session.async_wait_closed())
             done, pending = await asyncio.wait(
-                {wait_first, wait_stop, wait_close},
+                {wait_first, wait_encoded, wait_stop, wait_close},
                 timeout=35.0, return_when=asyncio.FIRST_COMPLETED
             )
             for task in pending:
                 task.cancel()
-            if wait_first in done and first_frame.is_set():
-                events.onStatus("Diretta video avviata. Premi FERMA VIDEO per chiuderla.")
+            if (wait_first in done and first_frame.is_set()) or (
+                wait_encoded in done and encoded_sample.is_set()
+            ):
+                if first_frame.is_set():
+                    events.onStatus("JPEG ricevuto. Diretta attiva.")
+                else:
+                    events.onStatus("Flusso H264/H265 rilevato. Il decoder Android sta tentando di visualizzarlo.")
                 remaining = asyncio.create_task(_stopping.wait())
                 ended = asyncio.create_task(session.async_wait_closed())
                 done, pending = await asyncio.wait(
@@ -373,7 +391,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                     "negoziazione incompleta oppure codec incompatibile."
                 )
         finally:
-            for task in (locals().get("wait_first"),locals().get("wait_stop"),locals().get("wait_close")):
+            for task in (locals().get("wait_first"),locals().get("wait_encoded"),locals().get("wait_stop"),locals().get("wait_close")):
                 if task is not None and not task.done():
                     task.cancel()
     finally:
