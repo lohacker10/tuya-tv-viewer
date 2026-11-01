@@ -90,6 +90,98 @@ final class TuyaClient {
         }
         return new Outcome(msg.toString());
     }
+
+    /**
+     * Safe, read-only IPC configuration probe. It does NOT open a streaming session.
+     * No session tokens, local keys, identifiers or network addresses are shown
+     * or written to a log. Call only after an explicit button click.
+     */
+    Outcome probeCameraConfigs() throws Exception {
+        if(sid == null || ecode == null) throw new Exception("Esegui prima il login.");
+        List<JSONObject> devices = discoverDeviceRecords();
+        if(devices.isEmpty()) return new Outcome("Nessun dispositivo trovato. Controlla l'elenco del login.");
+
+        StringBuilder out=new StringBuilder();
+        out.append("TEST CONFIGURAZIONE VIDEO P2P\n");
+        out.append("Dispositivi rilevati: ").append(devices.size()).append('\n');
+        out.append("Non è ancora una prova di riproduzione video.\n\n");
+        int checked=0,ready=0;
+        for(JSONObject device:devices){
+            if(checked >= 12){out.append("Altri dispositivi non verificati.\n");break;}
+            checked++;
+            String label=device.optString("name","Dispositivo "+checked);
+            if(label.length()>70)label=label.substring(0,70)+"…";
+            String id=device.optString("devId","");
+            if(id.isEmpty())continue;
+            try{
+                JSONObject query=new JSONObject();query.put("devId",id);
+                JSONObject result=call("m.ipc.v4.rtc.config.get","1.0",query);
+                // Do not display, store or export secrets returned by the gateway.
+                if(hasNestedKey(result,"sessionId") || hasNestedKey(result,"motoId") ||
+                    hasNestedKey(result,"p2pConfig")){
+                    out.append("✓ ").append(label).append(": config P2P disponibile\n");
+                    ready++;
+                }else{
+                    out.append("? ").append(label).append(": risposta senza config P2P riconosciuta\n");
+                }
+            }catch(Exception e){
+                // Only show a short protocol category; never include the response body.
+                String type=safeMessage(e);
+                out.append("– ").append(label).append(": ").append(type).append('\n');
+            }
+        }
+        out.append("\nConfig P2P ottenute: ").append(ready).append("/").append(checked);
+        out.append("\nNessun flusso video avviato. I risultati rimangono solo sullo schermo.");
+        return new Outcome(out.toString());
+    }
+
+    private List<JSONObject> discoverDeviceRecords() throws Exception {
+        JSONObject houses;
+        try{houses=call("m.life.home.space.list","1.0",new JSONObject());}
+        catch(Exception ignored){houses=call("tuya.m.location.list","2.1",new JSONObject());}
+        JSONArray homes=new JSONArray();
+        findItems(houses,"gid",homes);
+        Set<String> seenHomes=new HashSet<>();
+        Map<String,JSONObject> records=new LinkedHashMap<>();
+        for(int i=0;i<homes.length();i++){
+            JSONObject home=homes.getJSONObject(i);
+            String gid=home.optString("gid","");
+            if(gid.isEmpty() || !seenHomes.add(gid))continue;
+            JSONObject params=new JSONObject();params.put("gid",home.opt("gid"));
+            JSONObject list;
+            try{list=call("m.life.my.group.device.list","2.2",params);}
+            catch(Exception ignored){list=call("tuya.m.my.group.device.list","1.0",params);}
+            JSONArray devices=new JSONArray();
+            findItems(list,"devId",devices);
+            for(int j=0;j<devices.length();j++){
+                JSONObject rec=devices.getJSONObject(j);
+                String id=rec.optString("devId","");
+                if(!id.isEmpty() && !records.containsKey(id)) records.put(id,rec);
+            }
+        }
+        return new ArrayList<>(records.values());
+    }
+    private static boolean hasNestedKey(Object data,String key){
+        if(data instanceof JSONObject){
+            JSONObject obj=(JSONObject)data;
+            if(obj.has(key)&&!obj.isNull(key))return true;
+            JSONArray names=obj.names();
+            if(names!=null)for(int i=0;i<names.length();i++){
+                Object child=obj.opt(names.optString(i));
+                if((child instanceof JSONObject || child instanceof JSONArray) &&
+                    hasNestedKey(child,key))return true;
+            }
+        }else if(data instanceof JSONArray){
+            JSONArray a=(JSONArray)data;
+            for(int i=0;i<a.length();i++){
+                Object child=a.opt(i);
+                if((child instanceof JSONObject || child instanceof JSONArray) &&
+                    hasNestedKey(child,key))return true;
+            }
+        }
+        return false;
+    }
+
     private static String normalizeMobile(String raw,String country) throws Exception {
         String p=raw.trim().replaceAll("[\\s\\-()]","");
         String prefix=country.replace("+","");
