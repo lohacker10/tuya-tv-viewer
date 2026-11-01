@@ -1,0 +1,40 @@
+name: Publish v0.5 live video experiment
+on:
+  push:
+    branches: [video-experiment]
+    paths: ['.github/workflows/publish-v0.5.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified experimental APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p apk
+          gh run download 41313191167 --repo "$GITHUB_REPOSITORY" --name tuya-tv-video-experimental --dir apk
+          test -s apk/app-debug.apk
+          cp apk/app-debug.apk tuya-tv-viewer-v0.5.0-live-experiment.apk
+          sha256sum tuya-tv-viewer-v0.5.0-live-experiment.apk
+      - name: Create v0.5.0 prerelease with real video attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.5.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; keeping previous APK immutable"
+            exit 0
+          fi
+          gh release create v0.5.0 tuya-tv-viewer-v0.5.0-live-experiment.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target a63a87126c945b503295926ee761c64ae72e6084 \
+            --title "Tuya TV Viewer v0.5.0 — Primo tentativo video live" \
+            --prerelease \
+            --notes "PRERELEASE SPERIMENTALE, NON VIDEO VALIDATO. Tenta la sessione P2P nativa e la visualizzazione di frame JPEG/MJPEG di una telecamera in Android TV, senza NAS. Il protocollo e il codec H.264 delle LSC Full HD potrebbero essere incompatibili. Richiede Android 7+ (API 24), sistema arm64-v8a, o emulatore x86_64. Nome e applicationId invariati: it.tuyatv.p2ptest; le firme debug potrebbero impedire l'aggiornamento in-place. Non sono state inserite credenziali personali. Non pubblicare dati di sessione o logcat completi."
