@@ -1,0 +1,38 @@
+name: Publish v0.10.0 RTP playback experiment
+on:
+  push:
+    branches: [video-experiment]
+    paths: ['.github/workflows/publish-v0.10.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch verified Android APK from successful build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 41318849210 --repo "$GITHUB_REPOSITORY" --name tuya-tv-video-experimental --dir dist
+          test -s dist/app-debug.apk
+          mv dist/app-debug.apk tuya-tv-viewer-v0.10.0.apk
+          sha256sum tuya-tv-viewer-v0.10.0.apk
+      - name: Publish immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.10.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing release preserved"
+            exit 0
+          fi
+          gh release create v0.10.0 tuya-tv-viewer-v0.10.0.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 9333f8f1eb7790c92c5501c6a6db3b99b1dd0167 \
+            --title "Tuya TV Viewer v0.10.0 — RTP video reconstruction" \
+            --prerelease \
+            --notes "Build Android TV sperimentale: RTP solo dopo 3 pacchetti con sequenza e SSRC coerenti; ricomposizione frammenti H264 FU-A e HEVC FU; diagnostica con RTP candidati/verificati, NAL ricostruite, SPS/PPS/IDR candidati, senza video o dati dell'utente nei log. Test Java e Python superati. La ricezione e visualizzazione VIDEO NON SONO ANCORA VERIFICATE sulle telecamere LSC. Per la nuova Action con timeout SDP non sono presenti correzioni convalidate. Android 7+ arm64, nome e applicationId invariati rispetto alla v0.9. La firma debug di Github Actions potrebbe richiedere la disinstallazione della build precedente."
