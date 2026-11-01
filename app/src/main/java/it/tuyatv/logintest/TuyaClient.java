@@ -222,13 +222,25 @@ final class TuyaClient {
         return new Outcome(info.toString());
     }
 
+    // P2P streaming accessors: session values remain in device RAM only.
+    String streamingSid(){return sid;}
+    String streamingEcode(){return ecode;}
+    String streamingUid(){return uid;}
+    String streamingRegion(){return currentRegion;}
+    String streamingClientId(){return CLIENT_ID;}
+    String streamingComposite(){return COMPOSITE;}
+    String streamingChannelKey() throws Exception {
+        return TuyaCrypto.hmac(CLIENT_ID,PACKAGE+"_"+CERT).substring(8,16);
+    }
+
     /** A camera selection stays exclusively in the app's RAM. Never export IDs. */
     static final class DeviceChoice {
         final String id;
         final String name;
         final boolean online;
-        DeviceChoice(String id,String name,boolean online){
-            this.id=id;this.name=name;this.online=online;
+        final String localKey;
+        DeviceChoice(String id,String name,boolean online,String localKey){
+            this.id=id;this.name=name;this.online=online;this.localKey=localKey;
         }
         @Override public String toString(){ return name+(online?"":" (offline)"); }
     }
@@ -243,7 +255,7 @@ final class TuyaClient {
             if(id.isEmpty())continue;
             String name=entry.optString("name","Dispositivo "+(devices.size()+1));
             if(name.length()>55)name=name.substring(0,55)+"…";
-            devices.add(new DeviceChoice(id,name,entry.optBoolean("isOnline",true)));
+            devices.add(new DeviceChoice(id,name,entry.optBoolean("isOnline",true),entry.optString("localKey","")));
         }
         return devices;
     }
