@@ -3,6 +3,8 @@ package it.tuyatv.logintest;
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.view.SurfaceView;
+import android.widget.FrameLayout;
 import android.util.Base64;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
@@ -29,6 +31,8 @@ public final class MainActivity extends Activity {
     private CheckBox remember;
     private Button login,clear,probe,relay,refresh,mqtt,copyLog,liveStart,liveStop;
     private ImageView liveImage;
+    private SurfaceView videoSurface;
+    private final EncodedVideoDecoder videoDecoder=new EncodedVideoDecoder();
     private volatile boolean liveRunning=false;
     private String diagnosticCopyText=null;
     private Spinner cameraPicker;
@@ -135,10 +139,15 @@ public final class MainActivity extends Activity {
         liveActions.addView(liveStart);
         liveStop=new Button(this);liveStop.setText("FERMA VIDEO");liveStop.setEnabled(false);
         liveActions.addView(liveStop);
+        FrameLayout videoContainer=new FrameLayout(this);
+        videoContainer.setBackgroundColor(Color.BLACK);
+        videoSurface=new SurfaceView(this);
+        videoContainer.addView(videoSurface,new FrameLayout.LayoutParams(-1,-1));
         liveImage=new ImageView(this);
         liveImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        liveImage.setBackgroundColor(Color.BLACK);
-        root.addView(liveImage,new LinearLayout.LayoutParams(-1,dp(270)));
+        liveImage.setVisibility(View.GONE);
+        videoContainer.addView(liveImage,new FrameLayout.LayoutParams(-1,-1));
+        root.addView(videoContainer,new LinearLayout.LayoutParams(-1,dp(270)));
 
         copyLog=new Button(this);copyLog.setText("COPIA LOG");copyLog.setEnabled(false);
         root.addView(copyLog);
@@ -186,7 +195,7 @@ public final class MainActivity extends Activity {
         copyLog.setEnabled(true);
     }
     private static String sanitizeDiagnostic(String msg){
-        return "Tuya TV Viewer diagnostica v0.4\n" + msg
+        return "Tuya TV Viewer diagnostica v0.7\n" + msg
             .replaceAll("(?m)^Dispositivo:.*$","Dispositivo: [omesso]")
             .replaceAll("(?m)^\\s*•.*$"," • [nome dispositivo omesso]")
             .replaceAll("(?i)(password|token|localkey|ecode|sid)\\s*[:=]\\s*\\S+","$1=[omesso]")
@@ -368,6 +377,15 @@ public final class MainActivity extends Activity {
                     setDiagnosticStatus(msg);
             });
         }
+        /** Receives AVC/HEVC Annex B in memory, never writes it to storage. */
+        public void onEncodedFrame(String codec, String frameB64){
+            if(!liveRunning)return;
+            try{
+                byte[] frame=Base64.decode(frameB64,Base64.DEFAULT);
+                runOnUiThread(()->liveImage.setVisibility(View.GONE));
+                videoDecoder.feed(videoSurface.getHolder().getSurface(),codec,frame);
+            }catch(Exception ignored){}
+        }
         public void onFrame(String jpegB64){
             try{
                 long now=android.os.SystemClock.elapsedRealtime();
@@ -377,6 +395,7 @@ public final class MainActivity extends Activity {
                 Bitmap frame=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
                 if(frame!=null)runOnUiThread(()->{
                     if(!liveRunning||isFinishing()||isDestroyed()){frame.recycle();return;}
+                    liveImage.setVisibility(View.VISIBLE);
                     liveImage.setImageBitmap(frame);
                 });
             }catch(Exception ignored){}
@@ -393,7 +412,9 @@ public final class MainActivity extends Activity {
             return;
         }
         liveRunning=true;liveStart.setEnabled(false);liveStop.setEnabled(true);
+        videoDecoder.stop();
         liveImage.setImageDrawable(null);
+        liveImage.setVisibility(View.GONE);
         setStatus("Apertura diretta P2P: "+camera.name+"…");
         TuyaClient client=authenticated;
         executor.execute(()->{
@@ -419,6 +440,7 @@ public final class MainActivity extends Activity {
     }
     private void stopVideo(){
         liveRunning=false;
+        videoDecoder.stop();
         if(liveStop!=null)liveStop.setEnabled(false);
         if(liveStart!=null)liveStart.setEnabled(authenticated!=null&&!choices.isEmpty());
         if(Python.isStarted()){
