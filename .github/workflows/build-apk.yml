@@ -43,6 +43,12 @@ jobs:
           PY
       - name: Check Python video engine syntax
         run: python -m py_compile app/src/main/python/tuya_stream.py
+      - name: Check video format parser and privacy filter
+        run: |
+          python -m unittest discover -s tools-tests -p 'test_video_gate.py' -v
+          mkdir -p /tmp/tuya-test-classes
+          javac -d /tmp/tuya-test-classes app/src/main/java/it/tuyatv/logintest/SafeDiagnostics.java tools-tests/it/tuyatv/logintest/SafeDiagnosticsTest.java
+          java -cp /tmp/tuya-test-classes it.tuyatv.logintest.SafeDiagnosticsTest
       - name: Assemble debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK
