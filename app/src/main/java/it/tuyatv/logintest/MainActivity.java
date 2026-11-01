@@ -195,7 +195,7 @@ public final class MainActivity extends Activity {
         copyLog.setEnabled(true);
     }
     private static String sanitizeDiagnostic(String msg){
-        return SafeDiagnostics.forClipboard(msg,"0.9");
+        return SafeDiagnostics.forClipboard(msg,"0.11.0");
     }
     private void authenticate(String user,String pass,String cc,String reg,boolean auto){
         if(busy||liveRunning)return;

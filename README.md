@@ -1,36 +1,27 @@
-# Tuya TV Viewer — prototipo Android TV
+# Tuya TV Viewer — prerelease Android TV
 
-Progetto Android TV **non ufficiale** per telecamere associate a **Tuya Smart**. Nessun NAS, server domestico o QR code.
+Prototipo Android TV non ufficiale per le telecamere associate a **Tuya Smart**. Il collegamento P2P avviene direttamente dall’app; non serve un NAS o un server domestico.
 
-## Stato v0.4.0
+## Stato v0.11.0
 
-- Login diretto Tuya Smart sul dispositivo e salvataggio locale cifrato opzionale
-- Scelta telecamera con telecomando Android TV
-- Verifica configurazione IPC/RTC e connessione TCP al relay Tuya
-- **TEST MQTT:** prova di autenticazione TLS/MQTT 3.1.1 sul canale di segnalazione P2P, senza inviare SDP, comandare o aprire video
-- **COPIA LOG:** copia negli appunti del dispositivo il risultato diagnostico, con nomi, credenziali e identificativi oscurati
-- **Non disponibile:** preview live, protocollo KCP, SDP offer/answer, decodifica H.264
+- Login Tuya Smart e selezione di una telecamera con telecomando
+- Diagnostica MQTT, SDP, relay e record media con log copiabili e dati personali oscurati
+- APK unico per ARM 32 bit, ARM 64 bit e x86_64; Android 7 o successivo
+- **Video live non confermato:** alcuni dispositivi completano la sessione P2P e inviano record media, ma non è ancora stato ricostruito un frame visualizzabile
+- La telecamera Action LSC recente può non rispondere all’offerta SDP
+- Griglia 2×2 e riconnessione automatica non ancora disponibili
 
-### Come provare
+Scarica la [prerelease v0.11.0](https://github.com/lohacker10/tuya-tv-viewer/releases/tag/v0.11.0). Il package Android resta `it.tuyatv.p2ptest`.
 
-Scarica l'APK v0.4 dalla [sezione Releases](https://github.com/lohacker10/tuya-tv-viewer/releases).
-Avvia l'app, accedi al tuo account Tuya Smart e premi **TEST MQTT**. Premi poi **COPIA LOG** per condividere il testo diagnostico ripulito.
+## Installazione e aggiornamenti
 
-Il test MQTT verifica solo che il broker consenta l'autenticazione; anche in caso di successo, **la diretta video non è stata ancora verificata**. Lo schema di autenticazione MQTT è sperimentale e potrebbe essere differente per alcune versioni Tuya Smart: un rifiuto non dimostra che le credenziali dell'account siano errate.
+Gli APK debug di GitHub Actions possono avere firme diverse. Android richiede la stessa firma per aggiornare un’app già installata: se compare un conflitto, disinstalla la versione precedente prima di installare quella nuova; i dati locali verranno rimossi. Una firma stabile verrà configurata prima della release pubblica.
 
-## Identità dell'app e aggiornamenti
+## Privacy
 
-Il nome Android e il package restano invariati rispetto alla v0.2: `it.tuyatv.p2ptest`.
-La firma debug di GitHub Actions viene creata su runner temporanei e può cambiare. **Android richiede stessa firma E stesso package per installare un APK come aggiornamento.** Se l'installazione segnala un conflitto, disinstalla la versione precedente prima di installare l'APK nuovo (perderai i dati locali).
-Per la release definitiva bisognerà configurare una firma persistente salvata *privatamente* nei GitHub Actions secrets, mai pubblicata nel repository.
+- Password e credenziali salvate restano sul dispositivo.
+- I frame video restano in memoria; non vengono registrati o caricati.
+- Il log copiato nasconde nomi, credenziali e identificativi.
+- Non pubblicare log grezzi di `adb logcat` o campioni video.
 
-## Sicurezza e privacy
-
-- Nessun account, password, sessione, token, ID delle telecamere, chiave locale o indirizzo privato dell'utente viene caricato nel codice GitHub.
-- Le credenziali sono inserite unicamente sulla stick e possono essere salvate tramite Android Keystore.
-- Il log del test MQTT mostra soltanto stati e categorie di errore. Il pulsante COPIA LOG rimuove nomi e identificativi dai test diagnostici.
-- Non sono inviati log personali a GitHub; i log vengono mostrati e copiati soltanto sul dispositivo.
-- Il protocollo mobile è basato sul progetto open source MIT [AboveColin/tuya-mobile](https://github.com/AboveColin/tuya-mobile); si veda `ATTRIBUTION.md`.
-- Android 6+; CAPTCHA/MFA non supportati.
-
-Nessuna affiliazione a Tuya o Action/LSC. **Non** allegare output non oscurati di `adb logcat` in issue pubbliche.
+L’app non è affiliata a Tuya, Action o LSC. CAPTCHA e MFA non sono supportati.

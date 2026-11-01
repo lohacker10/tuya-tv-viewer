@@ -2,7 +2,7 @@ name: Build APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, video-experiment]
+    branches: [main, video-experiment, 'fix/**']
 permissions:
   contents: write
 concurrency:
@@ -19,17 +19,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Python 3.12 for Chaquopy
+      - name: Python 3.11 for Chaquopy
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
       - name: Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
       - name: Vendor pinned MIT Tuya P2P Python package
         run: |
-          python -m pip download --no-deps --only-binary=:all: -d /tmp/tuya_pkg 'tuya-ipc-p2p-sdk==0.1.1'
+          python -m pip download --ignore-requires-python --no-deps --only-binary=:all: -d /tmp/tuya_pkg 'tuya-ipc-p2p-sdk==0.1.1'
           python - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile
@@ -40,7 +40,35 @@ jobs:
                       out=Path('app/src/main/python') / name
                       out.parent.mkdir(parents=True,exist_ok=True)
                       out.write_bytes(z.read(name))
+          # shortcut: the pinned v0.1.1 SDK uses two Python 3.12 syntax forms; recheck on SDK upgrades.
+          root = Path('app/src/main/python/tuya_ipc_p2p_sdk')
+          path = root / 'json_types.py'
+          source = path.read_text()
+          old = 'import json\n'
+          assert source.count(old) == 1
+          source = source.replace(old, 'import json\nfrom typing import TypeAlias\n', 1)
+          old = ('type JsonPrimitive = str | int | float | bool | None\n'
+                 'type JsonValue = JsonPrimitive | list[JsonValue] | dict[str, JsonValue]\n'
+                 'type JsonObject = dict[str, JsonValue]')
+          new = ('JsonPrimitive: TypeAlias = str | int | float | bool | None\n'
+                 'JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]\n'
+                 'JsonObject: TypeAlias = dict[str, JsonValue]')
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new, 1))
+          path = root / 'client.py'
+          source = path.read_text()
+          old = 'from typing import TYPE_CHECKING, Self\n'
+          assert source.count(old) == 1
+          source = source.replace(old, old.replace('Self', 'Self, TypeVar'), 1)
+          old = 'class TuyaIpcP2pClient:'
+          assert source.count(old) == 1
+          source = source.replace(old, 'T = TypeVar("T")\n\n\nclass TuyaIpcP2pClient:', 1)
+          old = 'async def _async_with_session[T](self, call: Callable[[AccountSession], Awaitable[T]]) -> T:'
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, 'async def _async_with_session(self, call: Callable[[AccountSession], Awaitable[T]]) -> T:', 1))
           PY
+      - name: Check Python 3.11 compatibility
+        run: python -m compileall -q app/src/main/python/tuya_ipc_p2p_sdk
       - name: Check Python video engine syntax
         run: python -m py_compile app/src/main/python/tuya_stream.py
       - name: Check video format parser and privacy filter
@@ -51,6 +79,22 @@ jobs:
           java -cp /tmp/tuya-test-classes it.tuyatv.logintest.SafeDiagnosticsTest
       - name: Assemble debug APK
         run: gradle --no-daemon :app:assembleDebug
+      - name: Verify APK metadata and native ABIs
+        run: |
+          python - <<'PY'
+          import os, pathlib, subprocess, zipfile
+          apk = pathlib.Path('app/build/outputs/apk/debug/app-debug.apk')
+          tools = pathlib.Path(os.environ['ANDROID_HOME']) / 'build-tools'
+          aapt = sorted(tools.glob('*/aapt'))[-1]
+          badging = subprocess.check_output([str(aapt), 'dump', 'badging', str(apk)], text=True)
+          assert "package: name='it.tuyatv.p2ptest' versionCode='11' versionName='0.11.0'" in badging
+          assert "sdkVersion:'24'" in badging and "targetSdkVersion:'28'" in badging
+          with zipfile.ZipFile(apk) as archive:
+              abis = {p.split('/')[1] for p in archive.namelist() if p.startswith('lib/') and p.count('/') >= 2}
+          required = {'armeabi-v7a', 'arm64-v8a', 'x86_64'}
+          assert required <= abis, f'missing ABIs: {required - abis}'
+          print('APK identity, SDK levels and ARMv7/ARM64/x86_64 libraries verified')
+          PY
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

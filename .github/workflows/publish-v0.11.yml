@@ -1,0 +1,50 @@
+name: Publish v0.11.0 multi-ABI prerelease
+on:
+  push:
+    tags: ['v0.11.0']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the successful APK build for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow build-apk.yml \
+            --branch fix/v0.10-installation \
+            --commit "$GITHUB_SHA" \
+            --status success --json databaseId --jq '.[0].databaseId')
+          test -n "$run_id" && test "$run_id" != null
+          mkdir -p dist
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name tuya-tv-video-experimental --dir dist
+          test -s dist/app-debug.apk
+          sha256sum dist/app-debug.apk
+      - name: Publish immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.11.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing release preserved"
+            exit 1
+          fi
+          cat > release-notes.md <<'EOF'
+          Compatibilità APK: armeabi-v7a, arm64-v8a e x86_64; Android 7+; package invariato.
+
+          Il runtime Python è 3.11 per includere dispositivi ARM a 32 bit. Il pacchetto P2P upstream 0.1.1 richiede Python 3.12, quindi la build applica un backport mirato ai due costrutti di sintassi usati da questa versione fissata.
+
+          La connessione P2P e la ricezione dei record media sono state osservate su alcune telecamere. Nessun frame video è stato decodificato o confermato; la camera Action LSC recente non ha risposto all’SDP. Nessun dato personale o video è incluso nell’APK.
+
+          Firma debug di GitHub Actions: se l’installazione segnala un conflitto di firma, disinstalla la versione precedente (i dati locali verranno rimossi).
+          EOF
+          gh release create v0.11.0 dist/app-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Tuya TV Viewer v0.11.0 — ARM 32 bit compatibility" \
+            --prerelease --notes-file release-notes.md

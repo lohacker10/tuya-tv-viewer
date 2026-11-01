@@ -9,7 +9,7 @@ public final class SafeDiagnosticsTest {
             "Dispositivo: Telecamera Est\n"+
             "sid=abcdef12345 token:abcdefghijklmnop\n"+
             "email=utente@example.com\n";
-        String safe=SafeDiagnostics.forClipboard(message,"0.9");
+        String safe=SafeDiagnostics.forClipboard(message,"0.11.0");
         ensure(safe.contains("• ✓ MQTT connesso."),"MQTT bullet lost");
         ensure(safe.contains("• Record canale: 4420"),"Record diagnostic lost");
         ensure(safe.contains("• Nessuna risposta SDP"),"SDP diagnostic lost");
@@ -18,7 +18,7 @@ public final class SafeDiagnosticsTest {
         ensure(!safe.contains("abcdef12345"),"SID exposed");
         ensure(!safe.contains("abcdefghijklmnop"),"token exposed");
         ensure(!safe.contains("utente@example.com"),"email exposed");
-        ensure(safe.contains("0.9\nSTREAM VIDEO"),"Newline missing");
+        ensure(safe.contains("0.11.0\nSTREAM VIDEO"),"Newline missing");
         System.out.println("SafeDiagnostics tests passed");
     }
     private static void ensure(boolean condition,String why){
