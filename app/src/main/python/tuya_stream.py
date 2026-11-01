@@ -178,6 +178,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
     from tuya_ipc_p2p_sdk.crypto import decrypt_record
     from tuya_ipc_p2p_sdk.control import is_control
     from tuya_ipc_p2p_sdk.media import extract_media_packets
+    from video_gate import VideoFormatGate
 
     tail = hashlib.md5(
         (hashlib.md5(client_id.encode()).hexdigest() + ecode).encode()
@@ -235,18 +236,32 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             self._frame_buffer = None
             self._last_codec = None
             self._rtp = RtpVideoBridge()
+            self._gate = VideoFormatGate()
+            self._offer_args = None
+            self._moto_retry = False
 
         def _emit_encoded(self, codec, data):
-            if not codec or not data:
+            if not data:
                 return
-            if self._last_codec != codec:
-                self._last_codec = codec
-                events.onStatus("Dati "+codec.upper()+
-                                " identificati: invio al decoder Android…")
+            # A raw NAL-looking byte pattern is not enough. Require a coherent
+            # codec parameter set and a keyframe, else keep the TV black and
+            # report honestly that the video format is not yet established.
+            accepted=self._gate.feed(data)
+            if not accepted:
+                return
+            verified_codec, verified_access_unit=accepted
+            if self._last_codec != verified_codec:
+                self._last_codec=verified_codec
+                events.onStatus(
+                    "Parametri "+verified_codec.upper()+
+                    " verificati (SPS/PPS e keyframe). Decoder hardware attivato."
+                )
             try:
                 self.video_samples += 1
                 encoded_sample.set()
-                events.onEncodedFrame(codec, base64.b64encode(data).decode("ascii"))
+                events.onEncodedFrame(
+                    verified_codec,base64.b64encode(verified_access_unit).decode("ascii")
+                )
             except Exception:
                 pass
 
@@ -272,7 +287,8 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                     " | chunk riconosciuti: "+str(self.packets_recognized)+
                     " | RTP: "+str(self._rtp.rtp_count)+
                     " | AnnexB: "+str(self.annexb_candidates)+
-                    " | campioni H264/H265: "+str(self.video_samples))
+                    " | campioni H264/H265 verificati: "+str(self.video_samples)+
+                    " | "+self._gate.safe_stats())
 
         async def _async_connect_signaling(self, session_id):
             self.phase = "connessione MQTT"
@@ -281,6 +297,7 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
 
         async def _async_publish_offer(self, *args):
             self.phase = "offerta SDP"
+            self._offer_args=args
             await super()._async_publish_offer(*args)
             events.onStatus("✓ Offerta SDP inviata. Attesa risposta telecamera…")
 
@@ -289,6 +306,31 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
             try:
                 answer = await super()._async_await_answer()
             except Exception as exc:
+                # Newer Tuya firmware may require moto_id in the outbound
+                # signaling envelope. Only retry once after no SDP answer,
+                # and only when the signed RTC config actually supplied it.
+                if ("sent no answer" in str(exc).lower() and
+                    self._config.moto_id and
+                    self._moto is not None and self._offer_args and
+                    not self._moto_retry):
+                    self._moto_retry=True
+                    events.onStatus(
+                        "Nessuna risposta SDP: provo una sola variante di segnalazione "+
+                        "compatibile con motoId RTC."
+                    )
+                    original=self._moto._header
+                    def header_with_moto(kind,trace_id=""):
+                        header=original(kind,trace_id)
+                        header["moto_id"]=self._config.moto_id
+                        return header
+                    self._moto._header=header_with_moto
+                    try:
+                        await self._async_publish_offer(*self._offer_args)
+                        answer=await super()._async_await_answer()
+                        events.onStatus("✓ SDP ricevuto con variante motoId.")
+                        return answer
+                    except Exception as retry_exc:
+                        exc=retry_exc
                 match=re.search(r"close_reason=(\d+)",str(exc))
                 if match:
                     reason=int(match.group(1))
@@ -404,10 +446,14 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                 session._flush_frame()
                 events.onStatus("Nessun JPEG ricostruito. "+session.diagnostics())
                 if not session.video_samples:
-                    events.onStatus("Formato video non ancora riconosciuto dal decoder.")
+                    events.onStatus(
+                        "Nessun codec verificato. Le firme video della v0.8 erano "+
+                        "solo indizi non sufficienti: serve identificare "+
+                        "l'incapsulamento dei dati Tuya."
+                    )
                 else:
-                    events.onStatus("Campioni H264/H265 inviati al decoder Android, "
-                                    "ma la visione non è ancora confermata.")
+                    events.onStatus("Dati codificati inviati al decoder, "
+                                    "ma la visualizzazione non è confermata.")
             else:
                 events.onStatus(
                     "Canale aperto ma nessun dato video. Telecamera occupata, "
