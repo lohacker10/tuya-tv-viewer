@@ -1,0 +1,38 @@
+name: Publish v0.7 direct AVC HEVC video attempt
+on:
+  push:
+    branches: [video-experiment]
+    paths: ['.github/workflows/publish-v0.7.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified APK from CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 41315239315 --repo "$GITHUB_REPOSITORY" --name tuya-tv-video-experimental --dir dist
+          test -s dist/app-debug.apk
+          mv dist/app-debug.apk tuya-tv-viewer-v0.7.0.apk
+          sha256sum tuya-tv-viewer-v0.7.0.apk
+      - name: Publish experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.7.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing prerelease preserved"
+            exit 0
+          fi
+          gh release create v0.7.0 tuya-tv-viewer-v0.7.0.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target ccbe7ff2c1d3d4541be1d771684ddcef0b92723b \
+            --title "Tuya TV Viewer v0.7.0 — Media H264 H265" \
+            --prerelease \
+            --notes "APK sperimentale Android TV per tentare il VIDEO LIVE di telecamere Tuya Action. Corregge il conteggio dei record media, distingue decifratura AES, chunk video e codec, tenta la decodifica hardware di frame Annex B H.264/H.265 riconoscibili, e mostra il codice di chiusura quando la telecamera rifiuta la negoziazione SDP. Nessun frame, token, chiave o ID inviato ai log o a GitHub. Un tentativo per volta; evitare di visualizzare contemporaneamente la stessa telecamera nell'app Tuya. Codec/protocollo non ancora convalidati sull'hardware Action. Stesso package e nome della v0.6, ma la firma debug può impedire l'aggiornamento diretto. Android 7+ ARM64."
