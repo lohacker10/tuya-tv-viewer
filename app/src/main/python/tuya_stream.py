@@ -307,18 +307,16 @@ async def _run(sid, ecode, uid, region, install_id, device_id,
                         self._frame_buffer.extend(b"\x00"*(end-len(self._frame_buffer)))
                     self._frame_buffer[offset:end]=payload
             else:
-                # Different IPC revisions may not use the MJPEG packet marker.
-                if not self._emit_video(decrypted):
-                    # Only feed RTP to the decoder after 3 coherent packets
-                    # with matching SSRC, offset and sequential RTP IDs.
-                    validated=self._rtp.push(decrypted)
-                    if validated:
-                        for codec,nal in validated:
-                            self._emit_encoded(codec,nal)
-                    else:
-                        codec,sample=_avcc_nal(decrypted)
-                        if sample is not None:
-                            self._emit_encoded(codec,sample)
+                # Always examine the RTP sequence first: a stray 00 00 01
+                # signature in a proprietary header is not proof of Annex B.
+                validated=self._rtp.push(decrypted)
+                if validated:
+                    for codec,nal in validated:
+                        self._emit_encoded(codec,nal)
+                elif not self._emit_video(decrypted):
+                    codec,sample=_avcc_nal(decrypted)
+                    if sample is not None:
+                        self._emit_encoded(codec,sample)
             super()._on_media_record(record)
 
     session = VisibleSession(config, identity, uid, on_frame)
