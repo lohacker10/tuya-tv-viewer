@@ -17,7 +17,8 @@ public final class MainActivity extends Activity {
     private SecureCredentials saved;
     private EditText account,password,country,region;
     private CheckBox remember;
-    private Button login,clear;
+    private Button login,clear,probe;
+    private volatile TuyaClient authenticated;
     private TextView status;
     private volatile boolean busy=false;
 
@@ -68,7 +69,7 @@ public final class MainActivity extends Activity {
         root.setPadding(dp(38),dp(20),dp(38),dp(20));
         outer.addView(root);
         setContentView(outer);
-        TextView title=text("TUYA TV  ·  LOGIN TEST",26,Color.WHITE);
+        TextView title=text("TUYA TV  ·  TEST P2P",26,Color.WHITE);
         title.setTypeface(null,1);root.addView(title);
         root.addView(text("Prova sperimentale su Tuya Smart (non Smart Life) · Nessun server domestico",14,0xFFB8CDD8));
 
@@ -99,6 +100,7 @@ public final class MainActivity extends Activity {
         root.addView(buttons);
         login=new Button(this);login.setText("PROVA LOGIN");buttons.addView(login);
         clear=new Button(this);clear.setText("ELIMINA DATI");buttons.addView(clear);
+        probe=new Button(this);probe.setText("TEST VIDEO P2P");probe.setEnabled(false);buttons.addView(probe);
 
         status=text("Pronto. Inserisci email e password Tuya Smart.",17,0xFFF0F7FB);
         status.setPadding(dp(16),dp(10),dp(16),dp(10));
@@ -110,8 +112,10 @@ public final class MainActivity extends Activity {
             account.getText().toString().trim(),password.getText().toString(),
             country.getText().toString().trim().replace("+",""),
             region.getText().toString().trim().toLowerCase(Locale.ROOT),false));
+        probe.setOnClickListener(v->probeCameras());
         clear.setOnClickListener(v->{
             if(busy)return;
+            authenticated=null;probe.setEnabled(false);
             saved.clear();password.setText("");remember.setChecked(false);
             setStatus("Password salvata eliminata dal dispositivo.");
         });
@@ -126,13 +130,14 @@ public final class MainActivity extends Activity {
             setStatus("Regione non valida, usa eu per l'Italia.");return;
         }
         final boolean shouldRemember=remember.isChecked();
-        busy=true;login.setEnabled(false);clear.setEnabled(false);
+        busy=true;authenticated=null;probe.setEnabled(false);login.setEnabled(false);clear.setEnabled(false);
         setStatus((auto?"Login automatico":"Login manuale")+" in corso verso Tuya "+reg+"…");
         executor.execute(()->{
             String feedback;
             try{
                 TuyaClient client=new TuyaClient(reg,saved.fingerprint());
                 feedback=client.login(user,pass,cc).text;
+                authenticated=client;
                 if(shouldRemember){
                     try{saved.save(user,pass,cc,reg);}
                     catch(Exception e){feedback+="\nATTENZIONE: salvataggio locale non disponibile.";}
@@ -147,7 +152,26 @@ public final class MainActivity extends Activity {
             final String message=feedback;
             runOnUiThread(()->{
                 if(isFinishing()||isDestroyed())return;
-                busy=false;login.setEnabled(true);clear.setEnabled(true);setStatus(message);
+                busy=false;login.setEnabled(true);clear.setEnabled(true);
+                probe.setEnabled(authenticated!=null);setStatus(message);
+            });
+        });
+    }
+    private void probeCameras(){
+        if(busy || authenticated==null)return;
+        busy=true;probe.setEnabled(false);login.setEnabled(false);clear.setEnabled(false);
+        setStatus("Verifica delle configurazioni video P2P in corso…\nNon vengono avviati flussi o salvati dati delle telecamere.");
+        final TuyaClient client=authenticated;
+        executor.execute(()->{
+            String result;
+            try{result=client.probeCameraConfigs().text;}
+            catch(Exception e){result="TEST NON COMPLETATO\n"+TuyaClient.safeMessage(e)
+                +"\n\nPuò dipendere dagli endpoint o dalla struttura dell'account, non necessariamente dalla telecamera.";}
+            final String message=result;
+            runOnUiThread(()->{
+                if(isFinishing()||isDestroyed())return;
+                busy=false;probe.setEnabled(authenticated!=null);
+                login.setEnabled(true);clear.setEnabled(true);setStatus(message);
             });
         });
     }
