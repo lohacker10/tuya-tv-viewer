@@ -47,6 +47,8 @@ class VideoFormatGate:
         self.candidates = 0
         self.config_units = 0
         self.confirmed_samples = 0
+        self.avc_idr_candidates = 0
+        self.hevc_idr_candidates = 0
 
     def feed(self, blob: bytes):
         if not blob:
@@ -87,10 +89,14 @@ class VideoFormatGate:
                     self.hevc_pps = ANNEX_B + nal
                     self.config_units += 1
                     continue
+            if avc_type == 5 and len(nal) >= 16:
+                self.avc_idr_candidates += 1
             if avc_type == 5 and len(nal) >= 16 and self.h264_sps and self.h264_pps:
                 self.codec = "avc"
                 self.confirmed_samples += 1
                 return "avc",self.h264_sps+self.h264_pps+ANNEX_B+nal
+            if hevc_type in (19,20) and len(nal) >= 16 and (nal[1] & 7):
+                self.hevc_idr_candidates += 1
             if hevc_type in (19,20) and len(nal) >= 16 and self.hevc_vps and self.hevc_sps and self.hevc_pps:
                 self.codec = "hevc"
                 self.confirmed_samples += 1
@@ -98,6 +104,13 @@ class VideoFormatGate:
         return None
 
     def safe_stats(self):
-        return ("NAL candidate: "+str(self.candidates)+
-                " | config validi: "+str(self.config_units)+
+        return ("NAL candidati: "+str(self.candidates)+
+                " | config candidati: "+str(self.config_units)+
+                " | IDR AVC: "+str(self.avc_idr_candidates)+
+                " | IDR HEVC: "+str(self.hevc_idr_candidates)+
+                " | SPS AVC: "+str(bool(self.h264_sps))+
+                " | PPS AVC: "+str(bool(self.h264_pps))+
+                " | VPS HEVC: "+str(bool(self.hevc_vps))+
+                " | SPS HEVC: "+str(bool(self.hevc_sps))+
+                " | PPS HEVC: "+str(bool(self.hevc_pps))+
                 " | codec verificato: "+(self.codec or "nessuno"))
