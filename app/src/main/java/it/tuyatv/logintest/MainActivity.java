@@ -1,6 +1,11 @@
 package it.tuyatv.logintest;
 
 import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Base64;
+import com.chaquo.python.Python;
+import com.chaquo.python.android.AndroidPlatform;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -22,7 +27,9 @@ public final class MainActivity extends Activity {
     private SecureCredentials saved;
     private EditText account,password,country,region;
     private CheckBox remember;
-    private Button login,clear,probe,relay,refresh,mqtt,copyLog;
+    private Button login,clear,probe,relay,refresh,mqtt,copyLog,liveStart,liveStop;
+    private ImageView liveImage;
+    private volatile boolean liveRunning=false;
     private String diagnosticCopyText=null;
     private Spinner cameraPicker;
     private List<TuyaClient.DeviceChoice> choices=Collections.emptyList();
@@ -122,6 +129,16 @@ public final class MainActivity extends Activity {
         choose.addView(relay);
         mqtt=new Button(this);mqtt.setText("TEST MQTT");mqtt.setEnabled(false);
         root.addView(mqtt);
+        LinearLayout liveActions=new LinearLayout(this);
+        root.addView(liveActions);
+        liveStart=new Button(this);liveStart.setText("AVVIA VIDEO LIVE");liveStart.setEnabled(false);
+        liveActions.addView(liveStart);
+        liveStop=new Button(this);liveStop.setText("FERMA VIDEO");liveStop.setEnabled(false);
+        liveActions.addView(liveStop);
+        liveImage=new ImageView(this);
+        liveImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        liveImage.setBackgroundColor(Color.BLACK);
+        root.addView(liveImage,new LinearLayout.LayoutParams(-1,dp(270)));
 
         copyLog=new Button(this);copyLog.setText("COPIA LOG");copyLog.setEnabled(false);
         root.addView(copyLog);
@@ -140,6 +157,8 @@ public final class MainActivity extends Activity {
         refresh.setOnClickListener(v->loadDevices());
         relay.setOnClickListener(v->probeRelay());
         mqtt.setOnClickListener(v->probeMqtt());
+        liveStart.setOnClickListener(v->startVideo());
+        liveStop.setOnClickListener(v->stopVideo());
         copyLog.setOnClickListener(v->{
             if(diagnosticCopyText==null)return;
             ClipboardManager clipboard=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
@@ -150,6 +169,7 @@ public final class MainActivity extends Activity {
         });
         clear.setOnClickListener(v->{
             if(busy)return;
+            stopVideo();
             authenticated=null;probe.setEnabled(false);mqtt.setEnabled(false);
             clearDeviceChoices();refresh.setEnabled(false);
             saved.clear();password.setText("");remember.setChecked(false);
@@ -173,7 +193,7 @@ public final class MainActivity extends Activity {
             .replaceAll("[a-zA-Z0-9]{28,}","[identificativo omesso]");
     }
     private void authenticate(String user,String pass,String cc,String reg,boolean auto){
-        if(busy)return;
+        if(busy||liveRunning)return;
         if(user.isEmpty()||pass.isEmpty()||cc.isEmpty()||reg.isEmpty()){
             setStatus("Completa tutti i campi.");return;
         }
@@ -215,7 +235,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void probeCameras(){
-        if(busy || authenticated==null)return;
+        if(busy || liveRunning || authenticated==null)return;
         busy=true;probe.setEnabled(false);login.setEnabled(false);clear.setEnabled(false);mqtt.setEnabled(false);
         setStatus("Verifica delle configurazioni video P2P in corso…\nNon vengono avviati flussi o salvati dati delle telecamere.");
         final TuyaClient client=authenticated;
@@ -241,10 +261,11 @@ public final class MainActivity extends Activity {
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         cameraPicker.setAdapter(adapter);
         relay.setEnabled(false);
+        liveStart.setEnabled(false);
     }
 
     private void loadDevices(){
-        if(busy || authenticated==null)return;
+        if(busy || liveRunning || authenticated==null)return;
         busy=true;refresh.setEnabled(false);relay.setEnabled(false);mqtt.setEnabled(false);
         login.setEnabled(false);clear.setEnabled(false);probe.setEnabled(false);
         setStatus("Caricamento dei dispositivi Tuya Smart…");
@@ -267,6 +288,7 @@ public final class MainActivity extends Activity {
                 adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
                 cameraPicker.setAdapter(adapter);
                 relay.setEnabled(authenticated!=null && !choices.isEmpty());
+                liveStart.setEnabled(authenticated!=null && !choices.isEmpty());
                 if(error==null){
                     setStatus("LOGIN RIUSCITO\nDispositivi trovati: "+choices.size()+
                         "\nSelezionane uno e premi TEST RELAY P2P."+
@@ -279,7 +301,7 @@ public final class MainActivity extends Activity {
     }
 
     private void probeRelay(){
-        if(busy || authenticated==null || choices.isEmpty())return;
+        if(busy || liveRunning || authenticated==null || choices.isEmpty())return;
         Object selected=cameraPicker.getSelectedItem();
         if(!(selected instanceof TuyaClient.DeviceChoice)){
             setStatus("Seleziona una telecamera.");return;
@@ -308,7 +330,7 @@ public final class MainActivity extends Activity {
 
 
     private void probeMqtt(){
-        if(busy || authenticated==null)return;
+        if(busy || liveRunning || authenticated==null)return;
         final TuyaClient client=authenticated;
         busy=true;login.setEnabled(false);clear.setEnabled(false);
         probe.setEnabled(false);refresh.setEnabled(false);relay.setEnabled(false);mqtt.setEnabled(false);
@@ -327,5 +349,74 @@ public final class MainActivity extends Activity {
         });
     }
 
-    @Override protected void onDestroy(){executor.shutdownNow();super.onDestroy();}
+
+    /** Receives a JPEG frame directly from Python's in-process P2P engine. */
+    public final class VideoEvents {
+        private long lastFrameAt=0;
+        public void onStatus(String description){
+            runOnUiThread(()->{
+                if(!isFinishing()&&!isDestroyed())
+                    setDiagnosticStatus("STREAM VIDEO (sperimentale)\\n"+description);
+            });
+        }
+        public void onFrame(String jpegB64){
+            try{
+                long now=android.os.SystemClock.elapsedRealtime();
+                if(now-lastFrameAt<200)return;
+                lastFrameAt=now;
+                byte[] bytes=Base64.decode(jpegB64,Base64.DEFAULT);
+                Bitmap frame=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
+                if(frame!=null)runOnUiThread(()->{
+                    if(!liveRunning||isFinishing()||isDestroyed()){frame.recycle();return;}
+                    liveImage.setImageBitmap(frame);
+                });
+            }catch(Exception ignored){}
+        }
+    }
+
+    private void startVideo(){
+        if(busy||liveRunning||authenticated==null)return;
+        Object o=cameraPicker.getSelectedItem();
+        if(!(o instanceof TuyaClient.DeviceChoice))return;
+        TuyaClient.DeviceChoice camera=(TuyaClient.DeviceChoice)o;
+        if(camera.localKey.isEmpty()){
+            setDiagnosticStatus("VIDEO LIVE: la chiave locale della telecamera non è stata restituita da Tuya.");
+            return;
+        }
+        liveRunning=true;liveStart.setEnabled(false);liveStop.setEnabled(true);
+        liveImage.setImageDrawable(null);
+        setStatus("Apertura diretta P2P: "+camera.name+"…");
+        TuyaClient client=authenticated;
+        executor.execute(()->{
+            try{
+                if(!Python.isStarted())Python.start(new AndroidPlatform(getApplicationContext()));
+                Python.getInstance().getModule("tuya_stream").callAttr("start",
+                    client.streamingSid(),client.streamingEcode(),client.streamingUid(),
+                    client.streamingRegion(),saved.fingerprint(),
+                    camera.id,camera.localKey,client.streamingClientId(),
+                    client.streamingComposite(),client.streamingChannelKey(),
+                    new VideoEvents());
+            }catch(Throwable e){
+                runOnUiThread(()->setDiagnosticStatus(
+                    "Streaming non avviato: "+e.getClass().getSimpleName()+
+                    ". Verificare compatibilità del dispositivo con il motore Python."));
+            }finally{
+                runOnUiThread(()->{
+                    liveRunning=false;liveStop.setEnabled(false);
+                    liveStart.setEnabled(authenticated!=null&&!choices.isEmpty());
+                });
+            }
+        });
+    }
+    private void stopVideo(){
+        liveRunning=false;
+        if(liveStop!=null)liveStop.setEnabled(false);
+        if(liveStart!=null)liveStart.setEnabled(authenticated!=null&&!choices.isEmpty());
+        if(Python.isStarted()){
+            try{Python.getInstance().getModule("tuya_stream").callAttr("stop");}
+            catch(Exception ignored){}
+        }
+    }
+
+    @Override protected void onDestroy(){stopVideo();executor.shutdownNow();super.onDestroy();}
 }
