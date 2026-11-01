@@ -9,6 +9,8 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.*;
 import java.util.Locale;
+import java.util.List;
+import java.util.Collections;
 import java.util.concurrent.*;
 
 /** TV-friendly test screen. The user enters credentials locally on their Android TV. */
@@ -17,7 +19,9 @@ public final class MainActivity extends Activity {
     private SecureCredentials saved;
     private EditText account,password,country,region;
     private CheckBox remember;
-    private Button login,clear,probe;
+    private Button login,clear,probe,relay,refresh;
+    private Spinner cameraPicker;
+    private List<TuyaClient.DeviceChoice> choices=Collections.emptyList();
     private volatile TuyaClient authenticated;
     private TextView status;
     private volatile boolean busy=false;
@@ -69,9 +73,9 @@ public final class MainActivity extends Activity {
         root.setPadding(dp(38),dp(20),dp(38),dp(20));
         outer.addView(root);
         setContentView(outer);
-        TextView title=text("TUYA TV  ·  TEST P2P",26,Color.WHITE);
+        TextView title=text("TUYA TV  ·  TEST COLLEGAMENTO VIDEO",26,Color.WHITE);
         title.setTypeface(null,1);root.addView(title);
-        root.addView(text("Prova sperimentale su Tuya Smart (non Smart Life) · Nessun server domestico",14,0xFFB8CDD8));
+        root.addView(text("Tuya Smart · Diagnostica di una telecamera · Nessun server domestico",14,0xFFB8CDD8));
 
         LinearLayout fields=new LinearLayout(this);
         fields.setOrientation(LinearLayout.HORIZONTAL);
@@ -100,7 +104,18 @@ public final class MainActivity extends Activity {
         root.addView(buttons);
         login=new Button(this);login.setText("PROVA LOGIN");buttons.addView(login);
         clear=new Button(this);clear.setText("ELIMINA DATI");buttons.addView(clear);
-        probe=new Button(this);probe.setText("TEST VIDEO P2P");probe.setEnabled(false);buttons.addView(probe);
+        probe=new Button(this);probe.setText("CONFIG P2P");probe.setEnabled(false);buttons.addView(probe);
+
+        LinearLayout choose=new LinearLayout(this);choose.setGravity(Gravity.CENTER_VERTICAL);
+        root.addView(choose);
+        choose.addView(text("Telecamera",15,Color.WHITE));
+        cameraPicker=new Spinner(this);
+        cameraPicker.setMinimumHeight(dp(48));
+        choose.addView(cameraPicker,new LinearLayout.LayoutParams(0,dp(50),1));
+        refresh=new Button(this);refresh.setText("RICARICA");refresh.setEnabled(false);
+        choose.addView(refresh);
+        relay=new Button(this);relay.setText("TEST RELAY P2P");relay.setEnabled(false);
+        choose.addView(relay);
 
         status=text("Pronto. Inserisci email e password Tuya Smart.",17,0xFFF0F7FB);
         status.setPadding(dp(16),dp(10),dp(16),dp(10));
@@ -113,9 +128,12 @@ public final class MainActivity extends Activity {
             country.getText().toString().trim().replace("+",""),
             region.getText().toString().trim().toLowerCase(Locale.ROOT),false));
         probe.setOnClickListener(v->probeCameras());
+        refresh.setOnClickListener(v->loadDevices());
+        relay.setOnClickListener(v->probeRelay());
         clear.setOnClickListener(v->{
             if(busy)return;
             authenticated=null;probe.setEnabled(false);
+            clearDeviceChoices();refresh.setEnabled(false);
             saved.clear();password.setText("");remember.setChecked(false);
             setStatus("Password salvata eliminata dal dispositivo.");
         });
@@ -130,7 +148,9 @@ public final class MainActivity extends Activity {
             setStatus("Regione non valida, usa eu per l'Italia.");return;
         }
         final boolean shouldRemember=remember.isChecked();
-        busy=true;authenticated=null;probe.setEnabled(false);login.setEnabled(false);clear.setEnabled(false);
+        busy=true;authenticated=null;probe.setEnabled(false);
+        clearDeviceChoices();refresh.setEnabled(false);
+        login.setEnabled(false);clear.setEnabled(false);
         setStatus((auto?"Login automatico":"Login manuale")+" in corso verso Tuya "+reg+"…");
         executor.execute(()->{
             String feedback;
@@ -153,7 +173,10 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{
                 if(isFinishing()||isDestroyed())return;
                 busy=false;login.setEnabled(true);clear.setEnabled(true);
-                probe.setEnabled(authenticated!=null);setStatus(message);
+                probe.setEnabled(authenticated!=null);
+                refresh.setEnabled(authenticated!=null);
+                setStatus(message);
+                if(authenticated!=null)loadDevices();
             });
         });
     }
@@ -175,5 +198,76 @@ public final class MainActivity extends Activity {
             });
         });
     }
+
+    private void clearDeviceChoices(){
+        choices=Collections.emptyList();
+        ArrayAdapter<TuyaClient.DeviceChoice> adapter=new ArrayAdapter<>(
+            this,android.R.layout.simple_spinner_item,choices);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        cameraPicker.setAdapter(adapter);
+        relay.setEnabled(false);
+    }
+
+    private void loadDevices(){
+        if(busy || authenticated==null)return;
+        busy=true;refresh.setEnabled(false);relay.setEnabled(false);
+        login.setEnabled(false);clear.setEnabled(false);probe.setEnabled(false);
+        setStatus("Caricamento dei dispositivi Tuya Smart…");
+        final TuyaClient client=authenticated;
+        executor.execute(()->{
+            List<TuyaClient.DeviceChoice> devices=Collections.emptyList();
+            String failure=null;
+            try{devices=client.listDevicesForPreviewTest();}
+            catch(Exception e){failure=TuyaClient.safeMessage(e);}
+            final List<TuyaClient.DeviceChoice> list=devices;
+            final String error=failure;
+            runOnUiThread(()->{
+                if(isFinishing()||isDestroyed())return;
+                busy=false;login.setEnabled(true);clear.setEnabled(true);
+                refresh.setEnabled(authenticated!=null);probe.setEnabled(authenticated!=null);
+                choices=list;
+                ArrayAdapter<TuyaClient.DeviceChoice> adapter=new ArrayAdapter<>(
+                    this,android.R.layout.simple_spinner_item,choices);
+                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                cameraPicker.setAdapter(adapter);
+                relay.setEnabled(authenticated!=null && !choices.isEmpty());
+                if(error==null){
+                    setStatus("LOGIN RIUSCITO\nDispositivi trovati: "+choices.size()+
+                        "\nSelezionane uno e premi TEST RELAY P2P."+
+                        "\nIl test verifica la connessione di rete, non mostra ancora il video.");
+                }else{
+                    setStatus("LOGIN RIUSCITO\nElenco dispositivi non disponibile: "+error);
+                }
+            });
+        });
+    }
+
+    private void probeRelay(){
+        if(busy || authenticated==null || choices.isEmpty())return;
+        Object selected=cameraPicker.getSelectedItem();
+        if(!(selected instanceof TuyaClient.DeviceChoice)){
+            setStatus("Seleziona una telecamera.");return;
+        }
+        final TuyaClient.DeviceChoice device=(TuyaClient.DeviceChoice)selected;
+        final TuyaClient client=authenticated;
+        busy=true;login.setEnabled(false);clear.setEnabled(false);
+        probe.setEnabled(false);refresh.setEnabled(false);relay.setEnabled(false);
+        setStatus("Verifica relay P2P di "+device.name+"…\nNon vengono aperti flussi video.");
+        executor.execute(()->{
+            String message;
+            try{message=client.probeOneCameraTransport(device).text;}
+            catch(Exception e){message="TEST RELAY NON RIUSCITO\n"+TuyaClient.safeMessage(e)+
+                "\nQuesto non prova che la telecamera sia incompatibile.";}
+            final String output=message;
+            runOnUiThread(()->{
+                if(isFinishing()||isDestroyed())return;
+                busy=false;login.setEnabled(true);clear.setEnabled(true);
+                probe.setEnabled(authenticated!=null);refresh.setEnabled(authenticated!=null);
+                relay.setEnabled(authenticated!=null && !choices.isEmpty());
+                setStatus(output);
+            });
+        });
+    }
+
     @Override protected void onDestroy(){executor.shutdownNow();super.onDestroy();}
 }
