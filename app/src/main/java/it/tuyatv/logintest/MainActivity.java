@@ -195,11 +195,7 @@ public final class MainActivity extends Activity {
         copyLog.setEnabled(true);
     }
     private static String sanitizeDiagnostic(String msg){
-        return "Tuya TV Viewer diagnostica v0.7\n" + msg
-            .replaceAll("(?m)^Dispositivo:.*$","Dispositivo: [omesso]")
-            .replaceAll("(?m)^\\s*•.*$"," • [nome dispositivo omesso]")
-            .replaceAll("(?i)(password|token|localkey|ecode|sid)\\s*[:=]\\s*\\S+","$1=[omesso]")
-            .replaceAll("[a-zA-Z0-9]{28,}","[identificativo omesso]");
+        return SafeDiagnostics.forClipboard(msg,"0.9");
     }
     private void authenticate(String user,String pass,String cc,String reg,boolean auto){
         if(busy||liveRunning)return;
@@ -370,7 +366,10 @@ public final class MainActivity extends Activity {
             return client.streamingRtcConfig(cameraId);
         }
         public synchronized void onStatus(String description){
-            if(progress.length()>1500)progress.delete(0,Math.max(0,progress.length()-1000));
+            if(progress.length()>10000){
+                int end=progress.indexOf("\n",progress.length()-7500);
+                if(end>0)progress.delete(0,end+1);
+            }
             progress.append("• ").append(description).append('\n');
             final String msg="STREAM VIDEO (sperimentale)\n"+progress.toString();
             runOnUiThread(()->{
