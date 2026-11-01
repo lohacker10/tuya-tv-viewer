@@ -1,0 +1,38 @@
+name: Publish v0.8 direct video compatibility
+on:
+  push:
+    branches: [video-experiment]
+    paths: ['.github/workflows/publish-v0.8.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified v0.8 APK from build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 41316637556 --repo "$GITHUB_REPOSITORY" --name tuya-tv-video-experimental --dir dist
+          test -s dist/app-debug.apk
+          mv dist/app-debug.apk tuya-tv-viewer-v0.8.0.apk
+          sha256sum tuya-tv-viewer-v0.8.0.apk
+      - name: Publish experimental release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.8.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing release preserved"
+            exit 0
+          fi
+          gh release create v0.8.0 tuya-tv-viewer-v0.8.0.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target f2602632f2964e620ef8bdb75942fba7b9a6598d \
+            --title "Tuya TV Viewer v0.8.0 — Video Annex B, AVCC e RTP" \
+            --prerelease \
+            --notes "Prototipo di streaming diretto Tuya Smart per Android TV: prova a leggere frame H264/H265 Annex B (prefisso preservato), AVCC e RTP frammentato e usare il decoder hardware Android. Riporta il primo frame realmente decodificato, se presente, oltre a statistiche dei record e controllo. Le telecamere che non rispondono a SDP sono ancora incompatibili con la negoziazione implementata. Nessun frame, chiave, token o identificativo personale è salvato nei log GitHub. Stesso applicationId della v0.7, firma debug non stabile, possibile necessità di disinstallare la vecchia APK. Android >=7 ARM64."
