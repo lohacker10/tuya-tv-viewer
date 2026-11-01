@@ -166,7 +166,7 @@ public final class MainActivity extends Activity {
         copyLog.setEnabled(true);
     }
     private static String sanitizeDiagnostic(String msg){
-        return "Tuya TV Viewer diagnostica v0.4\\n" + msg
+        return "Tuya TV Viewer diagnostica v0.4\n" + msg
             .replaceAll("(?m)^Dispositivo:.*$","Dispositivo: [omesso]")
             .replaceAll("(?m)^\\s*•.*$"," • [nome dispositivo omesso]")
             .replaceAll("(?i)(password|token|localkey|ecode|sid)\\s*[:=]\\s*\\S+","$1=[omesso]")
@@ -216,7 +216,7 @@ public final class MainActivity extends Activity {
     }
     private void probeCameras(){
         if(busy || authenticated==null)return;
-        busy=true;probe.setEnabled(false);login.setEnabled(false);clear.setEnabled(false);
+        busy=true;probe.setEnabled(false);login.setEnabled(false);clear.setEnabled(false);mqtt.setEnabled(false);
         setStatus("Verifica delle configurazioni video P2P in corso…\nNon vengono avviati flussi o salvati dati delle telecamere.");
         final TuyaClient client=authenticated;
         executor.execute(()->{
@@ -228,6 +228,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{
                 if(isFinishing()||isDestroyed())return;
                 busy=false;probe.setEnabled(authenticated!=null);
+                mqtt.setEnabled(authenticated!=null);
                 login.setEnabled(true);clear.setEnabled(true);setDiagnosticStatus(message);
             });
         });
