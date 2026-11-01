@@ -1,0 +1,38 @@
+name: Publish v0.9.0 safe diagnostic fixes
+on:
+  push:
+    branches: [video-experiment]
+    paths: ['.github/workflows/publish-v0.9.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 41317832419 --repo "$GITHUB_REPOSITORY" --name tuya-tv-video-experimental --dir dist
+          test -s dist/app-debug.apk
+          mv dist/app-debug.apk tuya-tv-viewer-v0.9.0.apk
+          sha256sum tuya-tv-viewer-v0.9.0.apk
+      - name: Publish immutable beta APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.9.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists, asset unchanged"
+            exit 0
+          fi
+          gh release create v0.9.0 tuya-tv-viewer-v0.9.0.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 18ed4c08cb9293fabc8a077a9863cd3b22d11aba \
+            --title "Tuya TV Viewer v0.9.0 — Log copiabili e codec verificati" \
+            --prerelease \
+            --notes "Versione sperimentale Android TV. Corregge COPIA LOG: tutte le righe diagnostiche restano leggibili, con filtro mirato di nomi, email, credenziali e identificativi. Non annuncia piu AVC/HEVC sulla base di falsi indizi: il decoder si attiva soltanto quando riconosce set di parametri codec coerenti e un fotogramma chiave. Un solo fallback SDP con motoId RTC quando il dispositivo non risponde alla prima offerta. Test Python e Java automatici superati. Non garantisce ancora lo streaming sulle telecamere LSC; nessun flusso o dato personale salvato su GitHub. Package e nome Android invariati, ma con firma debug variabile puo essere necessaria la disinstallazione prima di installare la nuova versione."
