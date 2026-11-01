@@ -19,8 +19,8 @@ final class TuyaClient {
     private static final String CLIENT_ID="3cxxt3au9x33ytvq3h9j";
     private static final String COMPOSITE=PACKAGE+"_"+CERT+"_"+APP_KEY+"_"+APP_SECRET;
     private static final String APP_VERSION="7.8.6", SDK_VERSION="5.24.0", CORE_VERSION="5.17.0";
-    private final String apiUrl, deviceId;
-    private String sid, ecode;
+    private final String apiUrl, deviceId, currentRegion;
+    private String sid, ecode, uid;
 
     static final class Outcome { final String text; Outcome(String text){this.text=text;} }
     TuyaClient(String region,String installId){
@@ -33,6 +33,7 @@ final class TuyaClient {
             default:throw new IllegalArgumentException("Regione non supportata");
         }
         deviceId=installId;
+        currentRegion=region;
     }
     /** Do not call on the UI thread. No credentials are written to logs or files here. */
     Outcome login(String username,String password,String countryCode) throws Exception {
@@ -55,6 +56,7 @@ final class TuyaClient {
         JSONObject response=findObject(call(email?"thing.m.user.email.password.login":"thing.m.user.mobile.passwd.login",email?"3.0":"4.0",auth),"sid","ecode");
         sid=response.getString("sid");
         ecode=response.getString("ecode");
+        uid=response.optString("uid","");
         // Login is considered successful even when the optional device listing is unavailable.
         StringBuilder msg=new StringBuilder("LOGIN RIUSCITO ✓\nSessione Tuya Smart ricevuta.\n");
         try {
@@ -182,6 +184,43 @@ final class TuyaClient {
         return false;
     }
 
+
+
+    /** Authenticates a TLS MQTT session without subscribing or publishing camera data. */
+    Outcome testSignalingMqtt() {
+        StringBuilder info=new StringBuilder("TEST MQTT (SEGNALAZIONE P2P)\n");
+        info.append("Config IPC e relay TCP: verificati nel test precedente.\n");
+        info.append("Broker MQTT: connessione TLS e autenticazione.\n");
+        if(sid==null || ecode==null){
+            info.append("Esito: LOGIN NON PRESENTE\n");
+            return new Outcome(info.toString());
+        }
+        if(uid==null || uid.isEmpty()){
+            info.append("Esito: UID ACCOUNT NON RESTITUITO\n");
+            return new Outcome(info.toString());
+        }
+        try{
+            String channelKey=TuyaCrypto.hmac(CLIENT_ID,PACKAGE+"_"+CERT).substring(8,16);
+            String tail=TuyaCrypto.md5(TuyaCrypto.md5(CLIENT_ID)+ecode);
+            String username="p1000018_v1_"+CLIENT_ID+"_"+channelKey+"_mb_"+sid+tail.substring(16);
+            String password=TuyaCrypto.md5(TuyaCrypto.md5(COMPOSITE)+ecode).substring(8,24);
+            String mqttId=PACKAGE+"_mb_"+deviceId+"_"+TuyaCrypto.md5(uid+"sdkfasodifca")+"_DEFAULT";
+            String host="m1-"+currentRegion+".lifeaiot.com";
+            TuyaMqttProbe.Result result=TuyaMqttProbe.verify(host,mqttId,username,password);
+            info.append(result.safeDescription);
+        }catch(javax.net.ssl.SSLException tls){
+            info.append("Esito: TLS NON COMPLETATO (verifica certificato o protocollo)\n");
+        }catch(java.net.SocketTimeoutException timeout){
+            info.append("Esito: TIMEOUT CONNESSIONE MQTT\n");
+        }catch(java.io.IOException network){
+            info.append("Esito: MQTT NON RAGGIUNGIBILE O CONNESSIONE RIFIUTATA\n");
+        }catch(Exception other){
+            info.append("Esito: ERRORE LOCALE NELLA DERIVAZIONE MQTT\n");
+        }
+        info.append("\nNon sono stati inviati SDP, comandi o richieste video.");
+        info.append("\nNessuna credenziale o identificativo inserito in questo log.");
+        return new Outcome(info.toString());
+    }
 
     /** A camera selection stays exclusively in the app's RAM. Never export IDs. */
     static final class DeviceChoice {
