@@ -362,6 +362,7 @@ public final class MainActivity extends Activity {
     /** Receives a JPEG frame directly from Python's in-process P2P engine. */
     public final class VideoEvents {
         private long lastFrameAt=0;
+        private boolean firstDecoded=false;
         private final StringBuilder progress=new StringBuilder();
         public String fetchRtcJson(String cameraId) throws Exception {
             TuyaClient client=authenticated;
@@ -383,7 +384,12 @@ public final class MainActivity extends Activity {
             try{
                 byte[] frame=Base64.decode(frameB64,Base64.DEFAULT);
                 runOnUiThread(()->liveImage.setVisibility(View.GONE));
-                videoDecoder.feed(videoSurface.getHolder().getSurface(),codec,frame);
+                if(videoDecoder.feed(videoSurface.getHolder().getSurface(),codec,frame)
+                    && !firstDecoded){
+                    firstDecoded=true;
+                    onStatus("✓ Primo frame "+codec.toUpperCase(java.util.Locale.ROOT)+
+                        " decodificato e inviato al display.");
+                }
             }catch(Exception ignored){}
         }
         public void onFrame(String jpegB64){
