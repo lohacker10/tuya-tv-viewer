@@ -1,0 +1,28 @@
+name: Restore original v0.3 artifact
+on:
+  push:
+    paths: ['.github/workflows/restore-v0.3-asset.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download original successful v0.3 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 41311245583 --repo "$GITHUB_REPOSITORY" --name tuya-tv-p2p-debug-apk --dir dist
+          cp dist/app-debug.apk tuya-tv-p2p-test-v0.3.0.apk
+          printf 'b559fe36137e800854b263de7292bc2ffb53e876105a41ae34116a5dcd2f1a73  tuya-tv-p2p-test-v0.3.0.apk\n' | sha256sum -c -
+      - name: Restore original v0.3 release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v0.3.0 tuya-tv-p2p-test-v0.3.0.apk --repo "$GITHUB_REPOSITORY" --clobber

@@ -44,8 +44,8 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk "$ASSET"
           sha256sum "$ASSET"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release already exists: refusing to overwrite an immutable version."
-            exit 1
+            echo "Release already exists: leaving previous asset unchanged."
+            exit 0
           fi
           gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
