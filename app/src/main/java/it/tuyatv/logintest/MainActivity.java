@@ -1,6 +1,9 @@
 package it.tuyatv.logintest;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.text.InputType;
@@ -19,7 +22,8 @@ public final class MainActivity extends Activity {
     private SecureCredentials saved;
     private EditText account,password,country,region;
     private CheckBox remember;
-    private Button login,clear,probe,relay,refresh;
+    private Button login,clear,probe,relay,refresh,mqtt,copyLog;
+    private String diagnosticCopyText=null;
     private Spinner cameraPicker;
     private List<TuyaClient.DeviceChoice> choices=Collections.emptyList();
     private volatile TuyaClient authenticated;
@@ -73,7 +77,7 @@ public final class MainActivity extends Activity {
         root.setPadding(dp(38),dp(20),dp(38),dp(20));
         outer.addView(root);
         setContentView(outer);
-        TextView title=text("TUYA TV  ·  TEST COLLEGAMENTO VIDEO",26,Color.WHITE);
+        TextView title=text("TUYA TV  ·  DIAGNOSTICA P2P",26,Color.WHITE);
         title.setTypeface(null,1);root.addView(title);
         root.addView(text("Tuya Smart · Diagnostica di una telecamera · Nessun server domestico",14,0xFFB8CDD8));
 
@@ -116,6 +120,11 @@ public final class MainActivity extends Activity {
         choose.addView(refresh);
         relay=new Button(this);relay.setText("TEST RELAY P2P");relay.setEnabled(false);
         choose.addView(relay);
+        mqtt=new Button(this);mqtt.setText("TEST MQTT");mqtt.setEnabled(false);
+        root.addView(mqtt);
+
+        copyLog=new Button(this);copyLog.setText("COPIA LOG");copyLog.setEnabled(false);
+        root.addView(copyLog);
 
         status=text("Pronto. Inserisci email e password Tuya Smart.",17,0xFFF0F7FB);
         status.setPadding(dp(16),dp(10),dp(16),dp(10));
@@ -130,15 +139,39 @@ public final class MainActivity extends Activity {
         probe.setOnClickListener(v->probeCameras());
         refresh.setOnClickListener(v->loadDevices());
         relay.setOnClickListener(v->probeRelay());
+        mqtt.setOnClickListener(v->probeMqtt());
+        copyLog.setOnClickListener(v->{
+            if(diagnosticCopyText==null)return;
+            ClipboardManager clipboard=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            if(clipboard!=null){
+                clipboard.setPrimaryClip(ClipData.newPlainText("Tuya TV log",diagnosticCopyText));
+                Toast.makeText(this,"Log diagnostico copiato",Toast.LENGTH_SHORT).show();
+            }
+        });
         clear.setOnClickListener(v->{
             if(busy)return;
-            authenticated=null;probe.setEnabled(false);
+            authenticated=null;probe.setEnabled(false);mqtt.setEnabled(false);
             clearDeviceChoices();refresh.setEnabled(false);
             saved.clear();password.setText("");remember.setChecked(false);
             setStatus("Password salvata eliminata dal dispositivo.");
         });
     }
-    private void setStatus(String msg){status.setText(msg);}
+    private void setStatus(String msg){
+        status.setText(msg);diagnosticCopyText=null;
+        if(copyLog!=null)copyLog.setEnabled(false);
+    }
+    private void setDiagnosticStatus(String msg){
+        status.setText(msg);
+        diagnosticCopyText=sanitizeDiagnostic(msg);
+        copyLog.setEnabled(true);
+    }
+    private static String sanitizeDiagnostic(String msg){
+        return "Tuya TV Viewer diagnostica v0.4\\n" + msg
+            .replaceAll("(?m)^Dispositivo:.*$","Dispositivo: [omesso]")
+            .replaceAll("(?m)^\\s*•.*$"," • [nome dispositivo omesso]")
+            .replaceAll("(?i)(password|token|localkey|ecode|sid)\\s*[:=]\\s*\\S+","$1=[omesso]")
+            .replaceAll("[a-zA-Z0-9]{28,}","[identificativo omesso]");
+    }
     private void authenticate(String user,String pass,String cc,String reg,boolean auto){
         if(busy)return;
         if(user.isEmpty()||pass.isEmpty()||cc.isEmpty()||reg.isEmpty()){
@@ -148,7 +181,7 @@ public final class MainActivity extends Activity {
             setStatus("Regione non valida, usa eu per l'Italia.");return;
         }
         final boolean shouldRemember=remember.isChecked();
-        busy=true;authenticated=null;probe.setEnabled(false);
+        busy=true;authenticated=null;probe.setEnabled(false);mqtt.setEnabled(false);
         clearDeviceChoices();refresh.setEnabled(false);
         login.setEnabled(false);clear.setEnabled(false);
         setStatus((auto?"Login automatico":"Login manuale")+" in corso verso Tuya "+reg+"…");
@@ -175,6 +208,7 @@ public final class MainActivity extends Activity {
                 busy=false;login.setEnabled(true);clear.setEnabled(true);
                 probe.setEnabled(authenticated!=null);
                 refresh.setEnabled(authenticated!=null);
+                mqtt.setEnabled(authenticated!=null);
                 setStatus(message);
                 if(authenticated!=null)loadDevices();
             });
@@ -194,7 +228,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{
                 if(isFinishing()||isDestroyed())return;
                 busy=false;probe.setEnabled(authenticated!=null);
-                login.setEnabled(true);clear.setEnabled(true);setStatus(message);
+                login.setEnabled(true);clear.setEnabled(true);setDiagnosticStatus(message);
             });
         });
     }
@@ -210,7 +244,7 @@ public final class MainActivity extends Activity {
 
     private void loadDevices(){
         if(busy || authenticated==null)return;
-        busy=true;refresh.setEnabled(false);relay.setEnabled(false);
+        busy=true;refresh.setEnabled(false);relay.setEnabled(false);mqtt.setEnabled(false);
         login.setEnabled(false);clear.setEnabled(false);probe.setEnabled(false);
         setStatus("Caricamento dei dispositivi Tuya Smart…");
         final TuyaClient client=authenticated;
@@ -224,6 +258,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{
                 if(isFinishing()||isDestroyed())return;
                 busy=false;login.setEnabled(true);clear.setEnabled(true);
+                mqtt.setEnabled(authenticated!=null);
                 refresh.setEnabled(authenticated!=null);probe.setEnabled(authenticated!=null);
                 choices=list;
                 ArrayAdapter<TuyaClient.DeviceChoice> adapter=new ArrayAdapter<>(
@@ -251,7 +286,7 @@ public final class MainActivity extends Activity {
         final TuyaClient.DeviceChoice device=(TuyaClient.DeviceChoice)selected;
         final TuyaClient client=authenticated;
         busy=true;login.setEnabled(false);clear.setEnabled(false);
-        probe.setEnabled(false);refresh.setEnabled(false);relay.setEnabled(false);
+        probe.setEnabled(false);refresh.setEnabled(false);relay.setEnabled(false);mqtt.setEnabled(false);
         setStatus("Verifica relay P2P di "+device.name+"…\nNon vengono aperti flussi video.");
         executor.execute(()->{
             String message;
@@ -264,7 +299,29 @@ public final class MainActivity extends Activity {
                 busy=false;login.setEnabled(true);clear.setEnabled(true);
                 probe.setEnabled(authenticated!=null);refresh.setEnabled(authenticated!=null);
                 relay.setEnabled(authenticated!=null && !choices.isEmpty());
-                setStatus(output);
+                mqtt.setEnabled(authenticated!=null);
+                setDiagnosticStatus(output);
+            });
+        });
+    }
+
+
+    private void probeMqtt(){
+        if(busy || authenticated==null)return;
+        final TuyaClient client=authenticated;
+        busy=true;login.setEnabled(false);clear.setEnabled(false);
+        probe.setEnabled(false);refresh.setEnabled(false);relay.setEnabled(false);mqtt.setEnabled(false);
+        setStatus("Test MQTT: apertura canale di segnalazione cifrato…\n"
+            +"Nessun comando video viene inviato.");
+        executor.execute(()->{
+            String result=client.testSignalingMqtt().text;
+            runOnUiThread(()->{
+                if(isFinishing()||isDestroyed())return;
+                busy=false;login.setEnabled(true);clear.setEnabled(true);
+                probe.setEnabled(authenticated!=null);refresh.setEnabled(authenticated!=null);
+                relay.setEnabled(authenticated!=null&&!choices.isEmpty());
+                mqtt.setEnabled(authenticated!=null);
+                setDiagnosticStatus(result);
             });
         });
     }
