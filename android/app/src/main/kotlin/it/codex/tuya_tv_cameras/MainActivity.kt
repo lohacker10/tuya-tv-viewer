@@ -145,7 +145,16 @@ class MainActivity : FlutterActivity() {
                 val bytes = value.toJava(ByteArray::class.java)
                 frames[key.toJava(String::class.java)] = bytes
             }
-            if (frames.isNotEmpty()) mainHandler.post { frameSink?.success(frames) }
+            val rawStatuses = bridge.callAttr("stream_statuses").asMap()
+            val statuses = mutableMapOf<String, String>()
+            rawStatuses.forEach { (key, value) ->
+                statuses[key.toJava(String::class.java)] = value.toJava(String::class.java)
+            }
+            if (frames.isNotEmpty() || statuses.isNotEmpty()) {
+                mainHandler.post {
+                    frameSink?.success(mapOf("frames" to frames, "statuses" to statuses))
+                }
+            }
         } catch (_: Exception) {
             // A stream may be starting or stopping while the frame channel polls.
         }

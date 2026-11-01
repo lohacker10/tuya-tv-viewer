@@ -43,6 +43,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
   final _password = TextEditingController();
   final _countryCode = TextEditingController(text: '39');
   final _frames = ValueNotifier<Map<String, Uint8List>>({});
+  final _streamStatuses = ValueNotifier<Map<String, String>>({});
   StreamSubscription<dynamic>? _frameSubscription;
   List<CameraInfo> _cameras = const [];
   String _region = 'eu';
@@ -84,8 +85,21 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
 
   void _onFrames(dynamic event) {
     if (event is! Map) return;
+    final rawStatuses = event['statuses'];
+    if (rawStatuses is Map) {
+      final updatedStatuses = Map<String, String>.fromEntries(
+        rawStatuses.entries
+            .where((entry) => entry.key is String && entry.value is String)
+            .map((entry) => MapEntry(entry.key as String, entry.value as String)),
+      );
+      if (!mapEquals(updatedStatuses, _streamStatuses.value)) {
+        _streamStatuses.value = updatedStatuses;
+      }
+    }
+    final rawFrames = event['frames'];
+    if (rawFrames is! Map) return;
     final updated = Map<String, Uint8List>.of(_frames.value);
-    for (final entry in event.entries) {
+    for (final entry in rawFrames.entries) {
       if (entry.key is String && entry.value is Uint8List) {
         updated[entry.key as String] = entry.value as Uint8List;
       }
@@ -98,6 +112,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
     _cameras = decoded
         .map((item) => CameraInfo.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
+    _streamStatuses.value = {};
     _signedIn = true;
     _page = 0;
     if (_cameras.isNotEmpty) unawaited(_showPage(0));
@@ -164,6 +179,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
     try {
       await _backend.invokeMethod<void>('logout');
       _frames.value = {};
+      _streamStatuses.value = {};
       _username.clear();
       _password.clear();
       setState(() {
@@ -182,6 +198,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
   void dispose() {
     _frameSubscription?.cancel();
     _frames.dispose();
+    _streamStatuses.dispose();
     _username.dispose();
     _password.dispose();
     _countryCode.dispose();
@@ -391,12 +408,14 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
                       itemBuilder: (context, index) => CameraTile(
                         camera: visible[index],
                         frames: _frames,
+                        statuses: _streamStatuses,
                         autofocus: index == 0,
                         onSelected: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => CameraFullScreen(
                               camera: visible[index],
                               frames: _frames,
+                              statuses: _streamStatuses,
                             ),
                           ),
                         ),
@@ -450,6 +469,7 @@ class CameraTile extends StatelessWidget {
   const CameraTile({
     required this.camera,
     required this.frames,
+    required this.statuses,
     required this.onSelected,
     this.autofocus = false,
     super.key,
@@ -457,6 +477,7 @@ class CameraTile extends StatelessWidget {
 
   final CameraInfo camera;
   final ValueListenable<Map<String, Uint8List>> frames;
+  final ValueListenable<Map<String, String>> statuses;
   final VoidCallback onSelected;
   final bool autofocus;
 
@@ -497,16 +518,35 @@ class CameraTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  ValueListenableBuilder<Map<String, Uint8List>>(
-                    valueListenable: frames,
-                    builder: (context, allFrames, _) {
-                      final frame = allFrames[camera.id];
+                  AnimatedBuilder(
+                    animation: Listenable.merge([frames, statuses]),
+                    builder: (context, _) {
+                      final frame = frames.value[camera.id];
                       if (frame == null)
-                        return const Center(
-                          child: Icon(
-                            Icons.videocam_off_outlined,
-                            size: 42,
-                            color: Colors.white38,
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.videocam_off_outlined,
+                                  size: 42,
+                                  color: Colors.white38,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  statuses.value[camera.id] ??
+                                      (camera.online
+                                          ? 'Connessione P2P…'
+                                          : 'Telecamera offline'),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       return Image.memory(
@@ -569,11 +609,13 @@ class CameraFullScreen extends StatelessWidget {
   const CameraFullScreen({
     required this.camera,
     required this.frames,
+    required this.statuses,
     super.key,
   });
 
   final CameraInfo camera;
   final ValueListenable<Map<String, Uint8List>> frames;
+  final ValueListenable<Map<String, String>> statuses;
 
   @override
   Widget build(BuildContext context) {
@@ -583,19 +625,27 @@ class CameraFullScreen extends StatelessWidget {
         leading: const Focus(autofocus: true, child: BackButton()),
       ),
       body: Center(
-        child: ValueListenableBuilder<Map<String, Uint8List>>(
-          valueListenable: frames,
-          builder: (context, allFrames, _) {
-            final frame = allFrames[camera.id];
-            if (frame == null)
-              return const Column(
+        child: AnimatedBuilder(
+          animation: Listenable.merge([frames, statuses]),
+          builder: (context, _) {
+            final frame = frames.value[camera.id];
+            if (frame == null) {
+              final status = statuses.value[camera.id] ??
+                  (camera.online
+                      ? 'Connessione P2P…'
+                      : 'Telecamera offline');
+              return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 18),
-                  Text('Connessione alla telecamera…'),
+                  if (status == 'Connessione P2P…')
+                    const CircularProgressIndicator(),
+                  if (status != 'Connessione P2P…')
+                    const Icon(Icons.videocam_off_outlined, size: 48),
+                  const SizedBox(height: 18),
+                  Text(status, textAlign: TextAlign.center),
                 ],
               );
+            }
             return InteractiveViewer(
               child: Image.memory(
                 frame,

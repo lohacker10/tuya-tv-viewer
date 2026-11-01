@@ -45,25 +45,25 @@ jobs:
 
       - name: Name and checksum APK
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.2.apk
-          sha256sum tuya-tv-viewer-v0.11.0-beta.2.apk
+          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.3.apk
+          sha256sum tuya-tv-viewer-v0.11.0-beta.3.apk
 
       - name: Save APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-viewer-v0.11.0-beta.2
-          path: tuya-tv-viewer-v0.11.0-beta.2.apk
+          name: tuya-tv-viewer-v0.11.0-beta.3
+          path: tuya-tv-viewer-v0.11.0-beta.3.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish prerelease APK
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.11.0-beta.2
-          ASSET: tuya-tv-viewer-v0.11.0-beta.2.apk
+          TAG: v0.11.0-beta.3
+          ASSET: tuya-tv-viewer-v0.11.0-beta.3.apk
         run: |
           set -euo pipefail
-          NOTES="Beta Flutter per Android TV e Fire TV: login Tuya, griglia live 2x2 e selezione a schermo intero. Login email o telefono/password; Android 7+ e dispositivi ARMv7/ARM64. La diretta è sperimentale: il protocollo indipendente è alpha, MJPEG è il percorso video implementato e H.264 non è verificato. Installazione con firma debug: per passare da un APK firmato diversamente può servire disinstallare la versione precedente."
+          NOTES="Beta Flutter per Android TV e Fire TV: login Tuya, griglia live 2x2 e selezione a schermo intero. La beta 3 mostra per ogni telecamera lo stato P2P e il tipo dell’ultimo errore, così da diagnosticare i flussi senza condividere credenziali. Login email o telefono/password; Android 7+ e dispositivi ARMv7/ARM64. La diretta resta sperimentale: il protocollo indipendente è alpha, MJPEG è il percorso video implementato e H.264 non è verificato. Installazione con firma debug: per passare da un APK firmato diversamente può servire disinstallare la versione precedente."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
               gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
@@ -72,6 +72,6 @@ jobs:
             fi
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 2 Flutter" \
+              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 3 Flutter" \
               --prerelease --notes "$NOTES"
           fi

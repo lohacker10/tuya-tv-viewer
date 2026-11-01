@@ -78,6 +78,7 @@ class CameraStream:
         self._state_listeners: list[Callable[[], None]] = []
         self._last_frame: bytes | None = None
         self._last_frame_at = 0.0
+        self._last_error: str | None = None
         self._session: StreamSession | None = None
         self._supervisor_task: asyncio.Task[None] | None = None
         self._stall_task: asyncio.Task[None] | None = None
@@ -123,6 +124,11 @@ class CameraStream:
         return self._last_frame
 
     @property
+    def last_error(self) -> str | None:
+        """The type of the most recent failed session, if any."""
+        return self._last_error
+
+    @property
     def viewer_count(self) -> int:
         """How many consumers are currently reading the frame stream."""
         return len(self._subscribers)
@@ -157,6 +163,7 @@ class CameraStream:
         if self._supervisor_task is not None:
             return
         self._stop_requested.clear()
+        self._last_error = None
         self._supervisor_task = asyncio.create_task(self._async_supervise())
         self._stall_task = asyncio.create_task(self._async_watch_for_stalls())
 
@@ -220,6 +227,8 @@ class CameraStream:
             except asyncio.CancelledError:
                 raise
             except Exception as exception:
+                self._last_error = type(exception).__name__
+                self._notify_state()
                 LOGGER.warning(
                     "Failed to stream %s after %.0fs: %s",
                     self._device_id,
@@ -285,6 +294,9 @@ class CameraStream:
                 session.frame_count,
                 reason,
             )
+            if session.frame_count == 0:
+                self._last_error = "SessionClosedWithoutFrame"
+                self._notify_state()
             return session.frame_count > 0
         finally:
             self._session = None
@@ -336,6 +348,7 @@ class CameraStream:
                 queue.put_nowait(frame)
         if not self._first_frame.is_set():
             self._first_frame.set()
+            self._last_error = None
         if not was_streaming:
             self._notify_state()
 
