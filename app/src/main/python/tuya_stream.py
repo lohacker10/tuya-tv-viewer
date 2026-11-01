@@ -132,6 +132,24 @@ class RtpVideoBridge:
         return None,None
 
 
+def _avcc_nal(data):
+    """Recognize length-prefixed H.264/H.265 NAL units behind small headers."""
+    for offset in (0,4,8,12,16,20,24,28,32,40,48,64):
+        if len(data)<offset+12:
+            continue
+        length=int.from_bytes(data[offset:offset+4],"big")
+        if length<8 or length>512*1024 or offset+4+length>len(data):
+            continue
+        payload=data[offset+4:offset+4+length]
+        nal=payload[0]&31
+        if nal in (1,5,6,7,8,9):
+            return "avc",b"\x00\x00\x00\x01"+payload
+        hevc=(payload[0]>>1)&63
+        if hevc in (19,20,21,32,33,34,35,39,40) and len(payload)>2:
+            return "hevc",b"\x00\x00\x00\x01"+payload
+    return None,None
+
+
 def _rtc_dict(data):
     """Unwrap nested Tuya result structures without showing or logging secrets."""
     if isinstance(data, dict):
