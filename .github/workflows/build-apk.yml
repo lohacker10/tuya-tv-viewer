@@ -1,54 +1,77 @@
-name: Build APK
+name: Build and publish Android TV beta
+
 on:
-  workflow_dispatch:
   push:
     branches: [main]
+  workflow_dispatch:
+
 permissions:
   contents: write
+
 concurrency:
-  group: android-apk-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-tv-beta-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: JDK 17
+
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Gradle 8.10.2
-        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          gradle-version: '8.10.2'
-      - name: Check installed Android SDK
-        run: test -d "$ANDROID_HOME"
-      - name: Assemble debug APK
-        run: gradle --no-daemon :app:assembleDebug
-      - name: Upload APK artifact
+          python-version: '3.11'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.4'
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter packages
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Name and checksum APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.1.apk
+          sha256sum tuya-tv-viewer-v0.11.0-beta.1.apk
+
+      - name: Save APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-p2p-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: tuya-tv-viewer-v0.11.0-beta.1
+          path: tuya-tv-viewer-v0.11.0-beta.1.apk
           if-no-files-found: error
-          retention-days: 7
-      - name: Publish v0.4.0 prerelease
+          retention-days: 30
+
+      - name: Publish prerelease APK
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: v0.11.0-beta.1
+          ASSET: tuya-tv-viewer-v0.11.0-beta.1.apk
         run: |
           set -euo pipefail
-          TAG="v0.4.0"
-          ASSET="tuya-tv-viewer-v0.4.0.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$ASSET"
-          sha256sum "$ASSET"
+          NOTES="Beta Flutter per Android TV e Fire TV: login Tuya, griglia live 2x2 e selezione a schermo intero. Login email o telefono/password; Android 7+ e dispositivi ARMv7/ARM64. La diretta è sperimentale: il protocollo indipendente è alpha, MJPEG è il percorso video implementato e H.264 non è verificato. Installazione con firma debug: per passare da un APK firmato diversamente può servire disinstallare la versione precedente."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release already exists: leaving previous asset unchanged."
-            exit 0
+            if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+              gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+            else
+              echo "Release $TAG already exists; keeping its APK unchanged."
+            fi
+          else
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta Flutter" \
+              --prerelease --notes "$NOTES"
           fi
-          gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Tuya TV Viewer v0.4.0 — Test MQTT e log copiabile" \
-            --prerelease \
-            --notes "APK sperimentale per Android TV. Login Tuya Smart, test configurazione IPC, relay TCP e autenticazione MQTT 3.1.1 su TLS, senza inviare offer SDP o aprire video. Pulsante COPIA LOG con oscuramento nomi e identificativi. Questa build NON riproduce ancora video. Stesso applicationId della v0.2/v0.3, ma firma debug variabile: se l'aggiornamento non è accettato da Android occorre disinstallare la build precedente. Nessuna credenziale, sessione o chiave utente pubblicata."

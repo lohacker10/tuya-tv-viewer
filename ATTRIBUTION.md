@@ -1,12 +1,10 @@
-# Third-party credits
+# Third party credits
 
-Tuya Smart mobile API request signing and authentication were adapted from:
-- https://github.com/AboveColin/tuya-mobile
-  - MIT License, Copyright (c) 2026 tuya-mobile contributors
+The P2P session, relay transport and JPEG reassembly are adapted from [roquerodrigo/tuya-ipc-p2p-sdk](https://github.com/roquerodrigo/tuya-ipc-p2p-sdk), MIT License. Its license and reviewed upstream commit are in `third_party/tuya-ipc-p2p-sdk/`.
 
-This proof of concept is independent from Tuya Inc. and Action/LSC.
+Tuya Smart gateway signing and authentication are based on the MIT-licensed [AboveColin/tuya-mobile](https://github.com/AboveColin/tuya-mobile) project and its adaptation in this repository's earlier prototype.
 
-## MIT License — AboveColin/tuya-mobile
+## MIT License — tuya-mobile contributors
 
 Copyright (c) 2026 tuya-mobile contributors
 

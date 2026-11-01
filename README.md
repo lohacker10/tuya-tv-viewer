@@ -1,36 +1,20 @@
-# Tuya TV Viewer — prototipo Android TV
+# Tuya TV beta
 
-Progetto Android TV **non ufficiale** per telecamere associate a **Tuya Smart**. Nessun NAS, server domestico o QR code.
+App Flutter per Fire TV e Android TV: login Tuya con email oppure numero di telefono e password, accesso automatico con credenziali cifrate tramite Android Keystore, griglia 2×2 e selezione di una telecamera a schermo intero. La navigazione principale funziona con frecce e tasto OK del telecomando.
 
-## Stato v0.4.0
+## Build
 
-- Login diretto Tuya Smart sul dispositivo e salvataggio locale cifrato opzionale
-- Scelta telecamera con telecomando Android TV
-- Verifica configurazione IPC/RTC e connessione TCP al relay Tuya
-- **TEST MQTT:** prova di autenticazione TLS/MQTT 3.1.1 sul canale di segnalazione P2P, senza inviare SDP, comandare o aprire video
-- **COPIA LOG:** copia negli appunti del dispositivo il risultato diagnostico, con nomi, credenziali e identificativi oscurati
-- **Non disponibile:** preview live, protocollo KCP, SDP offer/answer, decodifica H.264
+Requisiti: Flutter 3.41 o successivo, Android SDK, JDK 17, Android Gradle Plugin 8.11.1 e Python 3.11. La versione Android minima è API 24 (Android 7); l’APK include ABI ARMv7 e ARM64.
 
-### Come provare
+```sh
+flutter pub get
+flutter build apk --release
+```
 
-Scarica l'APK v0.4 dalla [sezione Releases](https://github.com/lohacker10/tuya-tv-viewer/releases).
-Avvia l'app, accedi al tuo account Tuya Smart e premi **TEST MQTT**. Premi poi **COPIA LOG** per condividere il testo diagnostico ripulito.
+L’APK di questa beta è firmato con la chiave debug, per installazione manuale e prova. Per distribuirlo stabilmente serve una chiave di firma propria.
 
-Il test MQTT verifica solo che il broker consenta l'autenticazione; anche in caso di successo, **la diretta video non è stata ancora verificata**. Lo schema di autenticazione MQTT è sperimentale e potrebbe essere differente per alcune versioni Tuya Smart: un rifiuto non dimostra che le credenziali dell'account siano errate.
+## Account e protocollo
 
-## Identità dell'app e aggiornamenti
+Il client parla direttamente con i servizi mobili Tuya usando il progetto open source [tuya-ipc-p2p-sdk](https://github.com/roquerodrigo/tuya-ipc-p2p-sdk), licenza MIT, incluso in `third_party/tuya-ipc-p2p-sdk/`, adattato al profilo dell’app Tuya Smart. Non richiede SDK ufficiale. Inserire il prefisso internazionale per gli account con numero di telefono e la regione dell’account.
 
-Il nome Android e il package restano invariati rispetto alla v0.2: `it.tuyatv.p2ptest`.
-La firma debug di GitHub Actions viene creata su runner temporanei e può cambiare. **Android richiede stessa firma E stesso package per installare un APK come aggiornamento.** Se l'installazione segnala un conflitto, disinstalla la versione precedente prima di installare l'APK nuovo (perderai i dati locali).
-Per la release definitiva bisognerà configurare una firma persistente salvata *privatamente* nei GitHub Actions secrets, mai pubblicata nel repository.
-
-## Sicurezza e privacy
-
-- Nessun account, password, sessione, token, ID delle telecamere, chiave locale o indirizzo privato dell'utente viene caricato nel codice GitHub.
-- Le credenziali sono inserite unicamente sulla stick e possono essere salvate tramite Android Keystore.
-- Il log del test MQTT mostra soltanto stati e categorie di errore. Il pulsante COPIA LOG rimuove nomi e identificativi dai test diagnostici.
-- Non sono inviati log personali a GitHub; i log vengono mostrati e copiati soltanto sul dispositivo.
-- Il protocollo mobile è basato sul progetto open source MIT [AboveColin/tuya-mobile](https://github.com/AboveColin/tuya-mobile); si veda `ATTRIBUTION.md`.
-- Android 6+; CAPTCHA/MFA non supportati.
-
-Nessuna affiliazione a Tuya o Action/LSC. **Non** allegare output non oscurati di `adb logcat` in issue pubbliche.
+Il progetto upstream è dichiarato alpha: l’autore segnala di aver provato in tempo reale solo la regione US e di non aver verificato telecamere H.264. La sua implementazione restituisce immagini MJPEG, e una telecamera accetta un client video alla volta. Servizi, protocollo o parametri Tuya possono cambiare. La prima prova reale serve quindi a confermare login, regione e compatibilità dei modelli installati.
