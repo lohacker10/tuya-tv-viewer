@@ -79,14 +79,17 @@ class RtpVideoBridge:
 
     def push(self, raw):
         """Return zero or more (codec, Annex-B NAL) tuples from validated RTP."""
-        selected = None
-        for base in self.OFFSETS:
-            packet = self._parse_at(raw, base)
-            if packet is not None:
-                selected = packet
-                break
-        if selected is None:
+        matches = [packet for base in self.OFFSETS
+                   if (packet := self._parse_at(raw,base)) is not None]
+        if not matches:
             return []
+        def strength(packet):
+            track = self._tracks.get((packet.base,packet.payload_type,packet.ssrc))
+            if track is None:
+                return 0
+            continuity = ((packet.seq - track[0]) & 65535) == 1
+            return (4 if track[2] else 2) + (1 if continuity else 0)
+        selected = max(matches,key=strength)
         self.header_candidates += 1
         key = (selected.base, selected.payload_type, selected.ssrc)
         track = self._tracks.get(key)
