@@ -95,6 +95,29 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Translate published release notes to English
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for notes in .github/release-notes/*.md; do
+            tag="${notes##*/}"
+            tag="${tag%.md}"
+            if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $tag not found; skipping its archived notes."
+              continue
+            fi
+            title="$(sed -n '1s/^# //p' "$notes")"
+            if [[ -z "$title" ]]; then
+              echo "::error::Missing English release title in $notes"
+              exit 1
+            fi
+            sed '1,2d' "$notes" > "$RUNNER_TEMP/$tag.md"
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --notes-file "$RUNNER_TEMP/$tag.md"
+          done
+
       - name: Publish stable release
         if: steps.signing.outputs.configured == 'true'
         env:
@@ -107,12 +130,13 @@ jobs:
             exit 0
           fi
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          Prima release stabile di Telecamere.
+          Telecamere 1.1.0 adds a remote-operated video quality selector and a surveillance camera launcher icon.
 
-          - Home essenziale con quattro anteprime e ordine nord, nord est, est, sud ricavato dai nomi Tuya.
-          - Selezione con telecomando, riproduzione a tutto schermo in HD e audio quando disponibile.
-          - Controllo aggiornamenti da GitHub con verifica SHA-256; Android richiede la conferma d'installazione.
-          - Compatibile con Android 7 / API 24 o superiore. Fire OS 5 e Vega OS non sono supportati.
+          - The full-screen quality control shows the actual stream resolution and offers Auto, locked HD, and locked SD modes.
+          - Auto tries HD first and falls back to SD if HD playback fails. Locked modes keep requesting the selected quality.
+          - The quality preference is saved on the device. Audio remains enabled for full-screen playback when supported.
+          - The four-camera wall, remote navigation, and GitHub update checker remain available.
+          - Requires Android 7 / API 24 or later. Fire OS 5 and Vega OS are not supported.
           EOF
           gh release create "$tag" "$APK_NAME" "$APK_NAME.sha256" \
             --repo "$GITHUB_REPOSITORY" \

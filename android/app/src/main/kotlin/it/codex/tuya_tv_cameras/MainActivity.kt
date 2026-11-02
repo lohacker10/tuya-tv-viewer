@@ -70,6 +70,21 @@ class MainActivity : FlutterActivity() {
                     "canInstallUpdates" -> result.success(
                         Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls(),
                     )
+                    "getQualityMode" -> result.success(
+                        getSharedPreferences("tuya_settings", MODE_PRIVATE).getString("quality_mode", "auto"),
+                    )
+                    "setQualityMode" -> {
+                        val mode = call.arguments as? String
+                        if (mode == null || mode !in listOf("auto", "hd", "sd")) {
+                            result.error("INVALID_QUALITY", "Qualità video non valida.", null)
+                        } else {
+                            getSharedPreferences("tuya_settings", MODE_PRIVATE)
+                                .edit()
+                                .putString("quality_mode", mode)
+                                .apply()
+                            result.success(null)
+                        }
+                    }
                     "installUpdate" -> {
                         val args = call.arguments as? Map<*, *>
                         val version = args?.get("version") as? String

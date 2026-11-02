@@ -1,7 +1,7 @@
 name: tuya_tv_cameras
-description: App Android TV per le telecamere Tuya.
+description: Tuya camera viewer for Android TV and compatible Fire TV devices.
 publish_to: none
-version: 1.0.0+16
+version: 1.1.0+17
 
 environment:
   sdk: ^3.11.1

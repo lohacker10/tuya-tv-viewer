@@ -13,6 +13,7 @@ Telecamere brings your Tuya Smart / Smart Life cameras to the big screen. It is 
 - 🏠 Show four silent SD previews edge to edge, with a visible focus border for remote navigation.
 - 🧭 Order cameras by their names: **North**, **North East**, **East**, **South** (also recognizes **Nord**, **Nord Est**, **Est**, **Sud**). Other cameras follow in Tuya's original order.
 - 🎥 Press OK/Select to open one camera full screen in HD with audio when the camera and device support it. If HD playback fails, the app falls back to SD.
+- 🎚️ In full screen, use the quality control with the remote to choose **Auto**, **Lock HD**, or **Lock SD**. It shows the received resolution and saves your choice on the device. Auto tries HD first and falls back to SD when HD playback fails.
 - 🔄 Check GitHub for a newer stable release and offer to download it.
 
 Camera names are used for ordering but are not shown on the camera wall. Use Page Up/Down to move between groups when your account has more than four cameras.
@@ -48,6 +49,7 @@ Android requires permission to install packages from Telecamere and a confirmati
 | Arrow keys | Move focus around the camera wall |
 | OK / Select | Open the focused camera full screen |
 | Back | Return to the four-camera wall |
+| Quality control in full screen | Choose Auto, Lock HD, or Lock SD |
 | Page Up / Page Down | Change camera page |
 
 The app supports H.264 and H.265 streams through the Tuya camera/portal playback paths. Resolution, audio, and playback stability depend on the camera, network, and Android decoder. The app streams live video and does not save recordings.

@@ -4,6 +4,8 @@ The P2P session, relay transport and JPEG reassembly are adapted from [roquerodr
 
 Tuya Smart gateway signing and authentication are based on the MIT-licensed [AboveColin/tuya-mobile](https://github.com/AboveColin/tuya-mobile) project and its adaptation in this repository's earlier prototype.
 
+The Android launcher icon reuses Google's Material Icons `videocam_rounded` glyph from Flutter's bundled Material Icons font. It is converted to Android vector drawables and scaled. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## MIT License — tuya-mobile contributors
 
 Copyright (c) 2026 tuya-mobile contributors

@@ -54,13 +54,16 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _countryCode = TextEditingController(text: '39');
+  final _navigatorKey = GlobalKey<NavigatorState>();
   final _feeds = ValueNotifier<Map<String, RtcFeed>>({});
   int _generation = 0;
   bool _active = true;
   CameraInfo? _fullscreenCamera;
   bool _preferHd = true;
+  String _qualityMode = 'auto';
   int _selected = 0;
   final _focusNodes = List.generate(4, (_) => FocusNode());
+  final _qualityFocusNode = FocusNode();
   final _retries = <String, Timer>{};
   final _streamStatuses = ValueNotifier<Map<String, String>>({});
   StreamSubscription<dynamic>? _eventSubscription;
@@ -96,6 +99,14 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
 
   Future<void> _restoreLogin() async {
     try {
+      final mode = await _backend.invokeMethod<String>('getQualityMode');
+      if (mode != null && {'auto', 'hd', 'sd'}.contains(mode)) {
+        _qualityMode = mode;
+      }
+    } on PlatformException {
+      // Keep Auto as the default if the native preference is unavailable.
+    }
+    try {
       final cameras = await _backend.invokeMethod<String>('autoLogin');
       if (cameras != null) _setCameras(cameras);
     } on PlatformException catch (error) {
@@ -123,7 +134,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
 
   Future<void> _startCamera(CameraInfo camera, int generation) async {
     final fullscreen = _fullscreenCamera?.id == camera.id;
-    final hd = fullscreen && _preferHd;
+    final hd = fullscreen && _qualityMode != 'sd' && _preferHd;
     if (!mounted || generation != _generation || !_active) return;
     if (!camera.online) {
       _status(camera.id, 'Telecamera offline');
@@ -167,13 +178,15 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
 
   void _retry(CameraInfo camera, int generation, {bool hd = false}) {
     if (generation != _generation || !_active || !mounted) return;
-    if (hd) {
+    final fallbackToSd = hd && _qualityMode == 'auto';
+    if (fallbackToSd) {
       _preferHd = false;
       debugPrint('RTC HD unavailable; restoring SD with audio');
+      setState(() {});
     }
     _retries[camera.id]?.cancel();
     _retries[camera.id] = Timer(
-      Duration(seconds: hd ? 1 : 8),
+      Duration(seconds: fallbackToSd ? 1 : 8),
       () => unawaited(_startCamera(camera, generation)),
     );
   }
@@ -268,7 +281,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
       );
       _updatePromptShown = true;
       await showDialog<void>(
-        context: context,
+        context: _navigatorKey.currentContext!,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Aggiornamento disponibile'),
           content: Text('È disponibile Telecamere ${update.version}.'),
@@ -305,7 +318,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
       if (started == false) _pendingUpdatePermission = true;
     } on PlatformException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(_navigatorKey.currentContext!).showSnackBar(
         SnackBar(content: Text(error.message ?? 'Aggiornamento non riuscito.')),
       );
     }
@@ -375,7 +388,61 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
       _fullscreenCamera = camera;
       _preferHd = true;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _fullscreenCamera?.id == camera.id) {
+        _qualityFocusNode.requestFocus();
+      }
+    });
     unawaited(_showCurrent());
+  }
+
+  Future<void> _selectQuality() async {
+    final mode = await showDialog<String>(
+      context: _navigatorKey.currentContext!,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Qualità video'),
+        children: [
+          for (final option in const [
+            ('auto', 'Automatico · HD con fallback SD'),
+            ('hd', 'Blocca HD'),
+            ('sd', 'Blocca SD'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, option.$1),
+              child: Row(
+                children: [
+                  Icon(
+                    _qualityMode == option.$1
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: _qualityMode == option.$1
+                        ? const Color(0xff33d6c1)
+                        : Colors.white54,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(option.$2),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (mode == null || mode == _qualityMode) return;
+    try {
+      await _backend.invokeMethod<void>('setQualityMode', mode);
+      if (!mounted) return;
+      setState(() {
+        _qualityMode = mode;
+        _preferHd = true;
+      });
+      await _showCurrent();
+    } on PlatformException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(_navigatorKey.currentContext!).showSnackBar(
+          SnackBar(content: Text(error.message ?? 'Qualità non modificata.')),
+        );
+      }
+    }
   }
 
   void _returnToGrid() {
@@ -437,12 +504,14 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     for (final node in _focusNodes) {
       node.dispose();
     }
+    _qualityFocusNode.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'Telecamere',
       theme: ThemeData(
@@ -608,6 +677,14 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
                 camera: fullscreen,
                 feeds: _feeds,
                 statuses: _streamStatuses,
+                qualityMode: _qualityMode,
+                requestedQuality: _qualityMode == 'sd'
+                    ? 'SD'
+                    : _qualityMode == 'hd' || _preferHd
+                    ? 'HD'
+                    : 'SD',
+                qualityFocusNode: _qualityFocusNode,
+                onQualityPressed: _selectQuality,
               )
             : Focus(
                 onKeyEvent: (_, event) {
@@ -616,7 +693,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
                   if (key == LogicalKeyboardKey.contextMenu) {
                     unawaited(
                       showDialog<void>(
-                        context: context,
+                        context: _navigatorKey.currentContext!,
                         builder: (context) => SimpleDialog(
                           children: [
                             SimpleDialogOption(
@@ -783,12 +860,20 @@ class CameraVideo extends StatelessWidget {
     required this.camera,
     required this.feeds,
     required this.statuses,
+    this.qualityMode,
+    this.requestedQuality,
+    this.qualityFocusNode,
+    this.onQualityPressed,
     this.cover = false,
     super.key,
   });
   final CameraInfo camera;
   final ValueListenable<Map<String, RtcFeed>> feeds;
   final ValueListenable<Map<String, String>> statuses;
+  final String? qualityMode;
+  final String? requestedQuality;
+  final FocusNode? qualityFocusNode;
+  final VoidCallback? onQualityPressed;
   final bool cover;
 
   @override
@@ -812,34 +897,137 @@ class CameraVideo extends StatelessWidget {
               : const Icon(Icons.videocam_off_outlined, color: Colors.white38),
         ),
       );
-      if (feed == null) return placeholder();
-      return AnimatedBuilder(
-        animation: Listenable.merge([feed.renderer, feed]),
-        builder: (context, _) => Stack(
+      Widget content(RtcFeed? currentFeed) {
+        if (currentFeed == null) return placeholder();
+        final controller = currentFeed.hevcFeed?.controller;
+        final width = currentFeed.hevc
+            ? (controller?.value.size.width.round() ?? 0)
+            : currentFeed.renderer.videoWidth;
+        final height = currentFeed.hevc
+            ? (controller?.value.size.height.round() ?? 0)
+            : currentFeed.renderer.videoHeight;
+        final hasFrame = width > 0 && height > 0;
+        return Stack(
           fit: StackFit.expand,
           children: [
-            if (feed.hevcFeed?.controller?.value.isInitialized == true)
+            if (currentFeed.hevc && controller?.value.isInitialized == true)
               FittedBox(
                 fit: cover ? BoxFit.cover : BoxFit.contain,
                 child: SizedBox(
-                  width: feed.hevcFeed!.controller!.value.size.width,
-                  height: feed.hevcFeed!.controller!.value.size.height,
-                  child: VideoPlayer(feed.hevcFeed!.controller!),
+                  width: controller!.value.size.width,
+                  height: controller.value.size.height,
+                  child: VideoPlayer(controller),
                 ),
               )
-            else if (!feed.hevc && feed.renderer.textureId != null)
+            else if (!currentFeed.hevc &&
+                currentFeed.renderer.textureId != null)
               RTCVideoView(
-                feed.renderer,
+                currentFeed.renderer,
                 objectFit: cover
                     ? RTCVideoViewObjectFit.RTCVideoViewObjectFitCover
                     : RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
               ),
-            if (feed.hevc
-                ? feed.hevcFeed?.controller?.value.isInitialized != true
-                : feed.renderer.videoWidth == 0)
-              placeholder(),
+            if (!hasFrame) placeholder(),
           ],
-        ),
+        );
+      }
+
+      Widget qualityControl(RtcFeed? currentFeed) {
+        final onPressed = onQualityPressed;
+        if (cover || onPressed == null) return const SizedBox.shrink();
+        final controller = currentFeed?.hevcFeed?.controller;
+        final width = currentFeed == null
+            ? 0
+            : currentFeed.hevc
+            ? (controller?.value.size.width.round() ?? 0)
+            : currentFeed.renderer.videoWidth;
+        final height = currentFeed == null
+            ? 0
+            : currentFeed.hevc
+            ? (controller?.value.size.height.round() ?? 0)
+            : currentFeed.renderer.videoHeight;
+        final live = width > 0 && height > 0;
+        final actualQuality = live
+            ? (width * height >= 1280 * 720 ? 'HD' : 'SD')
+            : '${requestedQuality ?? 'HD'} in connessione';
+        final mode = switch (qualityMode) {
+          'hd' => 'HD BLOCCATA',
+          'sd' => 'SD BLOCCATA',
+          _ => 'AUTO',
+        };
+        final resolution = live ? ' · ${width}×$height' : '';
+        final label = '$actualQuality$resolution · $mode';
+        final focusNode = qualityFocusNode;
+        if (focusNode == null) return const SizedBox.shrink();
+        return Positioned(
+          right: 24,
+          top: 24,
+          child: Focus(
+            focusNode: focusNode,
+            autofocus: true,
+            onKeyEvent: (_, event) {
+              if (event is KeyDownEvent &&
+                  {
+                    LogicalKeyboardKey.select,
+                    LogicalKeyboardKey.enter,
+                    LogicalKeyboardKey.numpadEnter,
+                    LogicalKeyboardKey.space,
+                  }.contains(event.logicalKey)) {
+                onPressed();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: AnimatedBuilder(
+              animation: focusNode,
+              builder: (context, _) => Semantics(
+                button: true,
+                label: 'Qualità video: $label',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onPressed,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(32),
+                      border: Border.all(
+                        color: focusNode.hasFocus
+                            ? const Color(0xff33d6c1)
+                            : Colors.white54,
+                        width: focusNode.hasFocus ? 3 : 1,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.high_quality_outlined),
+                          const SizedBox(width: 12),
+                          Text(label),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      Widget buildVideo(RtcFeed? currentFeed) => Stack(
+        fit: StackFit.expand,
+        children: [content(currentFeed), qualityControl(currentFeed)],
+      );
+
+      if (feed == null) return buildVideo(null);
+      return AnimatedBuilder(
+        animation: Listenable.merge([feed.renderer, feed]),
+        builder: (context, _) => buildVideo(feed),
       );
     },
   );
