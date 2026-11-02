@@ -1,10 +1,16 @@
-# Tuya TV beta 5
+# Telecamere 1.0.0
 
-App Flutter per Fire TV e Android TV: login Tuya con email/telefono e password, credenziali cifrate tramite Android Keystore e accesso automatico.
+App Flutter per Fire TV e Android TV: login Tuya con email/telefono e password, credenziali cifrate tramite Android Keystore e accesso automatico. Nome e icona TV sono “Telecamere”, con un semplice simbolo videocamera.
 
-La home contiene soltanto quattro anteprime SD, senza titoli, barre o guide. Il bordo evidenzia la telecamera selezionata. Frecce e OK/Enter aprono la telecamera a tutto schermo, richiedendo il flusso principale **HD con audio**; BACK ripristina la griglia silenziosa. Durante il fullscreen viene mantenuta una sola connessione video. Il display resta acceso mentre l’app è visibile.
+Le quattro anteprime SD sono ordinate in base ai nomi Tuya: nord, nord est, est, sud. Le telecamere senza uno di questi nomi seguono dopo, mantenendo l'ordine Tuya. La home non mostra titoli, barre o guide; il bordo evidenzia la selezione. Frecce e OK/Enter aprono la telecamera a tutto schermo, richiedendo il flusso principale **HD con audio**; BACK ripristina la griglia silenziosa. Durante il fullscreen viene mantenuta una sola connessione video. Il display resta acceso mentre l’app è visibile.
 
 Il menu del telecomando permette di riconnettere o disconnettere l’account senza aggiungere pulsanti alla home. Page Up/Down cambiano pagina se l’account contiene più di quattro telecamere.
+
+## Aggiornamenti
+
+All'avvio l'app controlla la release stabile più recente del repository GitHub. Se trova una versione nuova, scarica l'APK e ne verifica SHA-256 prima di aprire il programma d'installazione Android. Android richiede di consentire a Telecamere l'installazione di app sconosciute e di confermare ogni aggiornamento sul televisore; non consente un'installazione silenziosa a un'app normale. Gli aggiornamenti futuri si pubblicano incrementando `version:` in `pubspec.yaml` (nome e codice versione).
+
+La firma Android è stabile e non è inclusa nel repository. Il workflow GitHub Actions legge questi repository Secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Se non sono configurati, esegue analisi/test/build ma salta la pubblicazione. La chiave privata va conservata in backup: cambiarla impedirebbe gli aggiornamenti in-place.
 
 ## Compatibilità
 
@@ -22,7 +28,7 @@ Se l’HD non parte o il decoder fallisce, l’app ripristina SD con audio abili
 
 Il login mobile autorizza automaticamente una sessione separata del portale **Tuya EU**, senza mostrare o scansionare QR. Non serve AppKey né SDK ufficiale Tuya. Password e SID mobile restano nel client mobile; il portale riceve la propria sessione web. Le sessioni scadute vengono rinnovate automaticamente. Al ritorno dall’app in pausa vengono riaperti i flussi della vista corrente.
 
-La beta usa il percorso WebRTC V3 (`p2pType=4`); altre regioni e protocolli non sono verificati. Le API private Tuya possono cambiare.
+La release usa il percorso WebRTC V3 (`p2pType=4`); altre regioni e protocolli non sono verificati. Le API private Tuya possono cambiare.
 
 ## Verifica reale
 
@@ -40,7 +46,7 @@ dart run test/fmp4_fragments_check.dart
 flutter build apk --release --target-platform android-arm,android-arm64
 ```
 
-GitHub Actions esegue analisi, test e build e allega l’APK alla prerelease. Firma debug per prove manuali: con chiavi diverse potrebbe servire disinstallare la beta precedente. La build debug locale usa `.dev` per convivere con la release conservandone i dati.
+GitHub Actions esegue analisi, test e build e allega l'APK firmato alla release stabile insieme al checksum. Poiché la beta precedente era firmata con una chiave debug temporanea, per passare alla prima release stabile occorre disinstallare la beta e installare la nuova app; Android cancellerà i dati della beta e servirà accedere a Tuya una volta. Le release successive si aggiornano mantenendo account e dati. La build debug locale usa `.dev` per convivere con la release conservandone i dati.
 
 ## Componenti
 

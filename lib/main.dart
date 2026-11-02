@@ -35,6 +35,14 @@ class CameraInfo {
   );
 }
 
+class _AvailableUpdate {
+  const _AvailableUpdate(this.version, this.apkUrl, this.checksumUrl);
+
+  final String version;
+  final String apkUrl;
+  final String checksumUrl;
+}
+
 class TuyaTvApp extends StatefulWidget {
   const TuyaTvApp({super.key});
 
@@ -63,6 +71,8 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
   bool _busy = true;
   bool _loading = false;
   bool _signedIn = false;
+  bool _updatePromptShown = false;
+  bool _pendingUpdatePermission = false;
 
   @override
   void initState() {
@@ -93,6 +103,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+    unawaited(_checkForUpdate());
   }
 
   void _onEvents(dynamic event) {
@@ -188,18 +199,128 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.resumed && !_active) {
       _active = true;
       if (_signedIn) unawaited(_showCurrent());
+      if (_pendingUpdatePermission) {
+        _pendingUpdatePermission = false;
+        unawaited(_resumeUpdateAfterPermission());
+      }
     }
   }
 
   void _setCameras(String json) {
     final decoded = jsonDecode(json) as List<dynamic>;
-    _cameras = decoded
+    final cameras = decoded
         .map((item) => CameraInfo.fromJson(item as Map<String, dynamic>))
-        .toList(growable: false);
+        .toList();
+    final ordered = cameras.indexed.toList()
+      ..sort((a, b) {
+        final rankA = _directionRank(a.$2.name);
+        final rankB = _directionRank(b.$2.name);
+        return rankA == rankB ? a.$1.compareTo(b.$1) : rankA.compareTo(rankB);
+      });
+    _cameras = ordered.map((entry) => entry.$2).toList(growable: false);
     _streamStatuses.value = {};
     _signedIn = true;
     _page = 0;
     if (_cameras.isNotEmpty) unawaited(_showCurrent());
+  }
+
+  int _directionRank(String name) {
+    final words = name
+        .toLowerCase()
+        .replaceAll('à', 'a')
+        .replaceAll('è', 'e')
+        .replaceAll('é', 'e')
+        .replaceAll('ì', 'i')
+        .replaceAll('ò', 'o')
+        .replaceAll('ù', 'u')
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((word) => word.isNotEmpty)
+        .toSet();
+    final north =
+        words.contains('nord') ||
+        words.contains('north') ||
+        words.contains('n');
+    final east =
+        words.contains('est') || words.contains('east') || words.contains('e');
+    final northEast =
+        (north && east) ||
+        words.contains('nordest') ||
+        words.contains('northeast') ||
+        words.contains('ne');
+    if (north && !northEast) return 0;
+    if (northEast) return 1;
+    if (east) return 2;
+    if (words.contains('sud') || words.contains('south') || words.contains('s'))
+      return 3;
+    return 4;
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_updatePromptShown || !mounted) return;
+    try {
+      final raw = await _backend.invokeMethod<String>('checkForUpdate');
+      if (raw == null || !mounted || _updatePromptShown) return;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final update = _AvailableUpdate(
+        data['version'] as String,
+        data['apkUrl'] as String,
+        data['checksumUrl'] as String,
+      );
+      _updatePromptShown = true;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Aggiornamento disponibile'),
+          content: Text('È disponibile Telecamere ${update.version}.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Più tardi'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                unawaited(_installUpdate(update));
+              },
+              icon: const Icon(Icons.download),
+              label: const Text('Aggiorna'),
+            ),
+          ],
+        ),
+      );
+    } on PlatformException {
+      // GitHub update checks are optional and never block app startup.
+    } on FormatException {
+      // Ignore malformed release metadata.
+    }
+  }
+
+  Future<void> _installUpdate(_AvailableUpdate update) async {
+    try {
+      final started = await _backend.invokeMethod<bool>('installUpdate', {
+        'version': update.version,
+        'apkUrl': update.apkUrl,
+        'checksumUrl': update.checksumUrl,
+      });
+      if (started == false) _pendingUpdatePermission = true;
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Aggiornamento non riuscito.')),
+      );
+    }
+  }
+
+  Future<void> _resumeUpdateAfterPermission() async {
+    try {
+      final allowed = await _backend.invokeMethod<bool>('canInstallUpdates');
+      if (allowed == true) {
+        _updatePromptShown = false;
+        await _checkForUpdate();
+      }
+    } on PlatformException {
+      // A later app launch retries the optional update check.
+    }
   }
 
   Future<void> _login() async {
@@ -323,7 +444,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Tuya TV',
+      title: 'Telecamere',
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
@@ -358,7 +479,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'TUYA TV',
+                  'TELECAMERE',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.w800,

@@ -1,4 +1,4 @@
-name: Build and publish Android TV beta
+name: Build and publish Telecamere
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-tv-beta-${{ github.ref }}
+  group: telecamere-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -49,38 +49,74 @@ jobs:
       - name: Test live MP4 fragments and audio clocks
         run: dart run test/fmp4_fragments_check.dart
 
+      - name: Prepare production signing key
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || -z "$ANDROID_KEY_ALIAS" || -z "$ANDROID_KEY_PASSWORD" ]]; then
+            echo "::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD to sign the stable release."
+            exit 1
+          fi
+          key_file="$RUNNER_TEMP/telecamere-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$key_file"
+          chmod 600 "$key_file"
+          {
+            echo "ANDROID_KEYSTORE_FILE=$key_file"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
       - name: Build APK
         run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Name and checksum APK
+        if: steps.signing.outputs.configured == 'true'
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.5.apk
-          sha256sum tuya-tv-viewer-v0.11.0-beta.5.apk
+          version="$(awk '/^version:/ { split($2, parts, "+"); print parts[1] }' pubspec.yaml)"
+          apk="Telecamere-v${version}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          printf 'RELEASE_VERSION=%s\nAPK_NAME=%s\n' "$version" "$apk" >> "$GITHUB_ENV"
 
-      - name: Save APK as workflow artifact
+      - name: Save signed APK as workflow artifact
+        if: steps.signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-viewer-v0.11.0-beta.5
-          path: tuya-tv-viewer-v0.11.0-beta.5.apk
+          name: Telecamere-v${{ env.RELEASE_VERSION }}
+          path: |
+            ${{ env.APK_NAME }}
+            ${{ env.APK_NAME }}.sha256
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish prerelease APK
+      - name: Publish stable release
+        if: steps.signing.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.11.0-beta.5
-          ASSET: tuya-tv-viewer-v0.11.0-beta.5.apk
         run: |
           set -euo pipefail
-          NOTES="Beta 5: home con sole quattro anteprime a tutto schermo, bordo di selezione, navigazione tramite telecomando. Selezionando una telecamera si richiede il flusso principale HD con audio; BACK ripristina quattro stream SD silenziosi. Supporto H.264 e H.265/MP4 del portale EU, con ripristino SD se il decoder HD non riesce a riprodurre. Login automatico username/password invariato. Richiede Android 7/API 24: Fire OS 5 non è compatibile e Vega OS non esegue questo APK. Verifica su TV reale ancora necessaria. Firma debug per prove manuali."
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-              gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
-            else
-              echo "Release $TAG already exists; keeping its APK unchanged."
-            fi
-          else
-            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 5 HD e audio" \
-              --prerelease --notes "$NOTES"
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; bump pubspec.yaml before publishing another APK."
+            exit 0
           fi
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          Prima release stabile di Telecamere.
+
+          - Home essenziale con quattro anteprime e ordine nord, nord est, est, sud ricavato dai nomi Tuya.
+          - Selezione con telecomando, riproduzione a tutto schermo in HD e audio quando disponibile.
+          - Controllo aggiornamenti da GitHub con verifica SHA-256; Android richiede la conferma d'installazione.
+          - Compatibile con Android 7 / API 24 o superiore. Fire OS 5 e Vega OS non sono supportati.
+          EOF
+          gh release create "$tag" "$APK_NAME" "$APK_NAME.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Telecamere $RELEASE_VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+
