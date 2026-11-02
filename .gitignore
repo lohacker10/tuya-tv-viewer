@@ -32,6 +32,15 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+local.properties
+*.key
+*.pem
+*.p12
+*.pfx
 *.jks
 *.keystore
 *.b64

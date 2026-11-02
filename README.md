@@ -1,42 +1,68 @@
-# Telecamere 1.0.0
+# 📺 Telecamere
 
-App Flutter per Fire TV e Android TV: login Tuya con email/telefono e password, credenziali cifrate tramite Android Keystore e accesso automatico. Nome e icona TV sono “Telecamere”, con un semplice simbolo videocamera.
+**A simple Tuya camera viewer for Android TV and compatible Fire TV devices.**
 
-Le quattro anteprime SD sono ordinate in base ai nomi Tuya: nord, nord est, est, sud. Le telecamere senza uno di questi nomi seguono dopo, mantenendo l'ordine Tuya. La home non mostra titoli, barre o guide; il bordo evidenzia la selezione. Frecce e OK/Enter aprono la telecamera a tutto schermo, richiedendo il flusso principale **HD con audio**; BACK ripristina la griglia silenziosa. Durante il fullscreen viene mantenuta una sola connessione video. Il display resta acceso mentre l’app è visibile.
+Telecamere brings your Tuya Smart / Smart Life cameras to the big screen. It is designed for people who want a quiet 2×2 camera wall controlled with a TV remote.
 
-Il menu del telecomando permette di riconnettere o disconnettere l’account senza aggiungere pulsanti alla home. Page Up/Down cambiano pagina se l’account contiene più di quattro telecamere.
+> This is an independent, community project. It is not affiliated with or endorsed by Tuya.
 
-## Aggiornamenti
+## ✨ What it does
 
-All'avvio l'app controlla la release stabile più recente del repository GitHub. Se trova una versione nuova, scarica l'APK e ne verifica SHA-256 prima di aprire il programma d'installazione Android. Android richiede di consentire a Telecamere l'installazione di app sconosciute e di confermare ogni aggiornamento sul televisore; non consente un'installazione silenziosa a un'app normale. Gli aggiornamenti futuri si pubblicano incrementando `version:` in `pubspec.yaml` (nome e codice versione).
+- 🔐 Sign in with your Tuya email or phone number and password. No QR code or Tuya developer AppKey is required.
+- 💾 Save sign-in details encrypted with Android Keystore so the app can sign in again when a session expires.
+- 🏠 Show four silent SD previews edge to edge, with a visible focus border for remote navigation.
+- 🧭 Order cameras by their names: **North**, **North East**, **East**, **South** (also recognizes **Nord**, **Nord Est**, **Est**, **Sud**). Other cameras follow in Tuya's original order.
+- 🎥 Press OK/Select to open one camera full screen in HD with audio when the camera and device support it. If HD playback fails, the app falls back to SD.
+- 🔄 Check GitHub for a newer stable release and offer to download it.
 
-La firma Android è stabile e non è inclusa nel repository. Il workflow GitHub Actions legge questi repository Secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Se non sono configurati, esegue analisi/test/build ma salta la pubblicazione. La chiave privata va conservata in backup: cambiarla impedirebbe gli aggiornamenti in-place.
+Camera names are used for ordering but are not shown on the camera wall. Use Page Up/Down to move between groups when your account has more than four cameras.
 
-## Compatibilità
+## 📺 Compatibility
 
-**Minimo Android 7/API 24**, ARMv7 o ARM64. Fire OS 5 è basato su Android 5.1/API 22 e non può installare questa build. Abbassare soltanto `minSdk` non basta: il runtime Python e le dipendenze attuali richiedono API 24. Per supportare Fire OS 5 servirebbe una variante legacy con componenti diversi.
+- Android TV and Android-based Fire TV devices running **Android 7 / API 24 or newer**.
+- ARMv7 and ARM64 APKs are included in each stable release.
+- **Fire OS 5 is not supported**: it is based on Android 5.1 / API 22.
+- **Vega OS devices are not supported** because they do not run Android APKs.
 
-Per sostituire lo stick, scegliere un modello Android/Fire OS compatibile, ad esempio **Fire TV Stick 4K Max di seconda generazione (2023), Fire OS 8**. I modelli con **Vega OS**, tra cui Fire TV Stick 4K Select, non eseguono questo APK. Verificare sempre modello e sistema operativo prima dell’acquisto.
+See Amazon's [Fire OS overview](https://developer.amazon.com/docs/fire-tv/fire-os-overview.html) and [Fire TV device list](https://developer.amazon.com/docs/device-specs/identify-fire-tv-devices.html) to check a device's platform.
 
-Fonti: [sistemi Fire TV](https://developer.amazon.com/docs/fire-tv/fire-os-overview.html), [identificazione dei modelli](https://developer.amazon.com/docs/device-specs/identify-fire-tv-devices.html), [requisiti Chaquopy](https://chaquo.com/chaquopy/doc/current/android.html).
+## ⬇️ Install
 
-## Video e autenticazione
+1. Open [Releases](https://github.com/lohacker10/tuya-tv-viewer/releases/latest) and download the `Telecamere-vX.Y.Z.apk` asset.
+2. Copy the APK to your TV or install it with ADB. Android may ask you to allow **Install unknown apps** for the app you used to open it.
+3. Confirm the Android package installer prompt.
+4. Open **Telecamere**, choose your account region, and sign in with your Tuya email/phone and password.
 
-La griglia richiede il flusso secondario H.264. Il fullscreen richiede il principale: H.264 via WebRTC oppure H.265 tramite il canale MP4 frammentato del portale e il decoder Android. Per quest’ultimo il flusso viene inoltrato al player esclusivamente su loopback, con buffer limitato; le durate AAC-LC errate e i timestamp vengono normalizzati senza ricodificare i dati video/audio. Non vengono registrate riprese sul dispositivo.
+The first stable release uses a new signing key. If you are moving from the old beta, uninstall the beta before installing this release; Android will erase its saved data, so you will need to sign in again. Future stable releases use the same signing key and can be installed as updates.
 
-Se l’HD non parte o il decoder fallisce, l’app ripristina SD con audio abilitato quando disponibile. La risoluzione e l’audio effettivi dipendono dalla telecamera e dal decoder. Su una TV reale occorre verificare soprattutto H.265 e audio HDMI.
+## 🔄 Updates
 
-Il login mobile autorizza automaticamente una sessione separata del portale **Tuya EU**, senza mostrare o scansionare QR. Non serve AppKey né SDK ufficiale Tuya. Password e SID mobile restano nel client mobile; il portale riceve la propria sessione web. Le sessioni scadute vengono rinnovate automaticamente. Al ritorno dall’app in pausa vengono riaperti i flussi della vista corrente.
+At app startup, Telecamere checks GitHub's [latest stable release](https://docs.github.com/en/rest/releases/releases#get-the-latest-release). When an update is available, choose **Update** to download the APK. The app checks its SHA-256 checksum and opens Android's package installer.
 
-La release usa il percorso WebRTC V3 (`p2pType=4`); altre regioni e protocolli non sono verificati. Le API private Tuya possono cambiare.
+Android requires permission to install packages from Telecamere and a confirmation for each update. It does not allow a regular app to install APK updates silently. See Android's [unknown app installation permission](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls()).
 
-## Verifica reale
+## 🎮 Remote controls
 
-Provata su un telefono Android 16 con quattro anteprime 640×360, selezione tramite telecomando/Enter/BACK e fullscreen H.264 a 1920×1080 con pacchetti audio ricevuti. Provato anche il percorso H.265 a 2304×1296 con una traccia audio AAC nel contenitore MP4. Fire TV e audio HDMI richiedono ancora una prova sul dispositivo reale.
+| Remote button | Action |
+| --- | --- |
+| Arrow keys | Move focus around the camera wall |
+| OK / Select | Open the focused camera full screen |
+| Back | Return to the four-camera wall |
+| Page Up / Page Down | Change camera page |
 
-## Build e verifiche
+The app supports H.264 and H.265 streams through the Tuya camera/portal playback paths. Resolution, audio, and playback stability depend on the camera, network, and Android decoder. The app streams live video and does not save recordings.
 
-Requisiti: Flutter 3.41+, Android SDK, JDK 17, Python 3.11.
+## 🔒 Privacy and security
+
+- Tuya account credentials are encrypted on the device with Android Keystore and are used to authenticate with Tuya.
+- The app connects to Tuya for account access and live camera streams, and to GitHub to check for app updates.
+- The public repository does not contain account passwords, session cookies, real account-specific camera IDs, or the Android release-signing key.
+- The source includes shared, app-level Tuya mobile protocol/signing constants recovered from the Tuya Smart Android app in [`const.py`](android/app/src/main/python/tuya_ipc_p2p_sdk/const.py). They are not user credentials or the release-signing key; like any client-side value, they can be inspected in the APK.
+- Tuya's mobile and portal APIs used for live view are unofficial and may change. Use only accounts and cameras you are authorized to access.
+
+## 🛠️ Build from source
+
+Requirements: Flutter 3.41+, JDK 17, Android SDK/NDK, and Python 3.11.
 
 ```sh
 flutter pub get
@@ -46,8 +72,13 @@ dart run test/fmp4_fragments_check.dart
 flutter build apk --release --target-platform android-arm,android-arm64
 ```
 
-GitHub Actions esegue analisi, test e build e allega l'APK firmato alla release stabile insieme al checksum. Poiché la beta precedente era firmata con una chiave debug temporanea, per passare alla prima release stabile occorre disinstallare la beta e installare la nuova app; Android cancellerà i dati della beta e servirà accedere a Tuya una volta. Le release successive si aggiornano mantenendo account e dati. La build debug locale usa `.dev` per convivere con la release conservandone i dati.
+A local build without the production signing environment uses Android's debug signing key. It is useful for testing, but it cannot update an APK signed by the project's production key.
 
-## Componenti
+## 📦 Releases and maintainers
 
-Login e scoperta delle telecamere derivano da [tuya-ipc-p2p-sdk](https://github.com/roquerodrigo/tuya-ipc-p2p-sdk), MIT, incluso in `third_party/tuya-ipc-p2p-sdk/`. I player usano [flutter_webrtc](https://pub.dev/packages/flutter_webrtc) e [video_player](https://pub.dev/packages/video_player). La segnalazione web è una implementazione indipendente del protocollo osservato; non include i bundle proprietari del portale o l’APK Tuya.
+GitHub Actions runs analysis, protocol tests, and an Android release build. To publish a new stable release, increment the version name and version code in `pubspec.yaml`. The workflow attaches the signed APK and its SHA-256 checksum to a GitHub Release.
+
+The production signing key is stored in GitHub Actions Secrets, never in this repository. The workflow expects `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`. Keep a secure backup of the signing key: losing it prevents in-place updates.
+
+See [ATTRIBUTION.md](ATTRIBUTION.md) for third-party code and licensing notes.
+
