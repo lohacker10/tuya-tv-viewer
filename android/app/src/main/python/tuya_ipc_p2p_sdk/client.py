@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from dataclasses import replace
 from typing import TYPE_CHECKING, Self, TypeVar
 
 from .camera_stream import (
@@ -87,9 +89,16 @@ class TuyaIpcP2pClient:
         """Return the account uid the signaling payloads are addressed from."""
         return (await self.async_account()).uid
 
-    async def async_mqtt_identity(self) -> MqttIdentity:
-        """Return the signaling broker identity of this account."""
-        return self._gateway.mqtt_identity(await self.async_account())
+    async def async_mqtt_identity(self, device_id: str | None = None) -> MqttIdentity:
+        """Return a distinct broker identity for each camera connection."""
+        account = await self.async_account()
+        if device_id is not None:
+            # MQTT brokers disconnect the old socket when a client ID is reused.
+            fingerprint = hashlib.sha256(
+                f"{account.device_fingerprint}:{device_id}".encode()
+            ).hexdigest()[:44]
+            account = replace(account, device_fingerprint=fingerprint)
+        return self._gateway.mqtt_identity(account)
 
     async def async_list_devices(self) -> list[TuyaDevice]:
         """Return every device on the account, across all of its homes."""

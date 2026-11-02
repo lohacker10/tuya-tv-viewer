@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import secrets
 import ssl
 from dataclasses import dataclass
 
@@ -42,7 +45,10 @@ class MqttClient:
         keepalive: int = 60,
         tls_context: ssl.SSLContext | None = None,
         clean_session: bool = True,
+        websocket_path: str | None = None,
     ) -> None:
+        self._websocket_path = websocket_path
+        self._websocket_buffer = bytearray()
         self._hostname = hostname
         self._port = port
         self._username = username
@@ -67,6 +73,8 @@ class MqttClient:
             ssl=self._tls_context,
             server_hostname=self._hostname,
         )
+        if self._websocket_path is not None:
+            await self._upgrade_websocket()
         flags = 0xC0 | (0x02 if self._clean_session else 0)
         connect = (
             _utf8("MQTT")
@@ -105,7 +113,9 @@ class MqttClient:
 
     async def messages(self):
         while True:
-            yield await self._messages.get()
+            message = await self._messages.get()
+            if message is None: raise ConnectionError("MQTT signaling connection lost")
+            yield message
 
     def start_reader(self) -> None:
         if self._reader_task is None:
@@ -123,23 +133,79 @@ class MqttClient:
         if writer is None:
             raise ConnectionError("MQTT connection is closed")
         async with self._write_lock:
-            writer.write(bytes([header]) + _remaining_length(len(body)) + body)
+            data = bytes([header]) + _remaining_length(len(body)) + body
+            writer.write(self._websocket_frame(2, data) if self._websocket_path is not None else data)
             await writer.drain()
 
     async def _read_packet(self) -> tuple[int, bytes]:
         reader = self._reader
         if reader is None:
             raise ConnectionError("MQTT connection is closed")
-        header = (await reader.readexactly(1))[0]
+        header = (await self._read_bytes(1))[0]
         multiplier = 1
         length = 0
         for _ in range(4):
-            digit = (await reader.readexactly(1))[0]
+            digit = (await self._read_bytes(1))[0]
             length += (digit & 0x7F) * multiplier
             if digit & 0x80 == 0:
-                return header, await reader.readexactly(length)
+                if length > 1048576:
+                    raise ConnectionError("MQTT signaling packet is too large")
+                return header, await self._read_bytes(length)
             multiplier *= 128
         raise ConnectionError("Invalid MQTT packet length")
+
+    async def _upgrade_websocket(self) -> None:
+        key = base64.b64encode(secrets.token_bytes(16)).decode()
+        request = (
+            f"GET {self._websocket_path} HTTP/1.1\r\nHost: {self._hostname}\r\n"
+            f"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: mqtt\r\n"
+            "Origin: https://protect-eu.ismartlife.me\r\n\r\n"
+        )
+        self._writer.write(request.encode())
+        await self._writer.drain()
+        response = (await self._reader.readuntil(b"\r\n\r\n")).decode("ascii")
+        lines = response.split("\r\n")
+        headers = {name.lower(): value.strip() for line in lines[1:] if ":" in line for name, value in [line.split(":", 1)]}
+        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        if (not lines[0].startswith("HTTP/1.1 101 ") or
+                headers.get("sec-websocket-accept", "").strip() != accept or
+                headers.get("sec-websocket-protocol", "").strip() != "mqtt"):
+            raise ConnectionError("Tuya WebSocket upgrade rejected")
+
+    @staticmethod
+    def _websocket_frame(opcode: int, data: bytes) -> bytes:
+        length = len(data)
+        header = bytes([0x80 | opcode])
+        if length < 126: header += bytes([0x80 | length])
+        elif length <= 65535: header += bytes([0xfe]) + length.to_bytes(2, "big")
+        else: header += bytes([0xff]) + length.to_bytes(8, "big")
+        mask = secrets.token_bytes(4)
+        return header + mask + bytes(value ^ mask[i % 4] for i, value in enumerate(data))
+
+    async def _read_bytes(self, length: int) -> bytes:
+        if self._websocket_path is None:
+            return await self._reader.readexactly(length)
+        while len(self._websocket_buffer) < length:
+            first, second = await self._reader.readexactly(2)
+            opcode, size = first & 15, second & 127
+            if second & 128 or first & 0x70:
+                raise ConnectionError("Unsupported WebSocket frame")
+            if size == 126: size = int.from_bytes(await self._reader.readexactly(2), "big")
+            elif size == 127: size = int.from_bytes(await self._reader.readexactly(8), "big")
+            if size > 1048576 or (opcode >= 8 and (size > 125 or not first & 128)):
+                raise ConnectionError("Invalid WebSocket frame length")
+            data = await self._reader.readexactly(size)
+            if opcode in (0, 2): self._websocket_buffer.extend(data)
+            elif opcode == 9:
+                async with self._write_lock:
+                    self._writer.write(self._websocket_frame(10, data))
+                    await self._writer.drain()
+            elif opcode == 8: raise ConnectionError("Tuya WebSocket closed")
+            elif opcode != 10: raise ConnectionError("Unsupported WebSocket opcode")
+        data = bytes(self._websocket_buffer[:length])
+        del self._websocket_buffer[:length]
+        return data
 
     async def _read_loop(self) -> None:
         try:
@@ -163,6 +229,8 @@ class MqttClient:
                 if not waiter.done():
                     waiter.set_exception(ConnectionError(str(exception)))
             self._acks.clear()
+            if self._messages.full(): self._messages.get_nowait()
+            self._messages.put_nowait(None)
 
     async def _consume_publish(self, header: int, body: bytes) -> None:
         if len(body) < 2:
@@ -211,7 +279,8 @@ class MqttClient:
         self._reader = None
         if writer is not None:
             try:
-                writer.write(b"\xe0\x00")
+                packet = b"\xe0\x00"
+                writer.write(self._websocket_frame(2, packet) if self._websocket_path is not None else packet)
                 await writer.drain()
             except OSError:
                 pass

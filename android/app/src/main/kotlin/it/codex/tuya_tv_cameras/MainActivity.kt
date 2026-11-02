@@ -13,6 +13,7 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONObject
 import java.security.KeyStore
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -22,16 +23,16 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 private const val METHOD_CHANNEL = "tuya_tv/backend"
-private const val FRAME_CHANNEL = "tuya_tv/frames"
+private const val EVENT_CHANNEL = "tuya_tv/events"
 
 class MainActivity : FlutterActivity() {
-    private val worker = Executors.newFixedThreadPool(2)
+    private val worker = Executors.newSingleThreadExecutor()
     private val poller = Executors.newSingleThreadScheduledExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var bridge: PyObject
     private lateinit var vault: CredentialVault
-    @Volatile private var frameSink: EventChannel.EventSink? = null
-    private var framePoll: ScheduledFuture<*>? = null
+    @Volatile private var eventSink: EventChannel.EventSink? = null
+    private var eventPoll: ScheduledFuture<*>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,30 +72,26 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
-                    "startStreams" -> {
-                        val cameraIds = (call.arguments as? List<*>)?.filterIsInstance<String>()
-                        if (cameraIds == null) result.error("INVALID_CAMERAS", "Elenco telecamere non valido.", null)
-                        else worker.execute {
-                            try {
-                                val idsJson = org.json.JSONArray(cameraIds).toString()
-                                try {
-                                    bridge.callAttr("start_streams", idsJson)
-                                } catch (expiredSession: Exception) {
-                                    val credentials = vault.read() ?: throw expiredSession
-                                    login(
-                                        credentials.username,
-                                        credentials.password,
-                                        credentials.countryCode,
-                                        credentials.region,
-                                    )
-                                    bridge.callAttr("start_streams", idsJson)
-                                }
-                                mainHandler.post { result.success(null) }
-                            } catch (exception: Exception) {
-                                mainHandler.post { result.error("STREAM_START", safeMessage(exception), null) }
-                            }
-                        }
+                    "prepareStream" -> {
+                        val id = call.arguments as? String
+                        if (id.isNullOrBlank()) result.error("INVALID_CAMERA", "Telecamera non valida", null)
+                        else worker.execute { runBridge(result, "STREAM_START") {
+                            bridge.callAttr("prepare_stream", id).toJava(String::class.java)
+                        } }
                     }
+                    "rtcSignal" -> {
+                        val args = call.arguments as? Map<*, *>
+                        val values = listOf("id", "handle", "type", "value").map { args?.get(it) as? String }
+                        if (values.any { it.isNullOrBlank() }) result.error("INVALID_SIGNAL", "Segnale non valido", null)
+                        else worker.execute { runBridge(result, "STREAM_SIGNAL") {
+                            bridge.callAttr("rtc_signal", *values.toTypedArray())
+                            null
+                        } }
+                    }
+                    "stopStreams" -> worker.execute { runBridge(result, "STREAM_STOP") {
+                        bridge.callAttr("stop_streams")
+                        null
+                    } }
                     "logout" -> worker.execute {
                         try {
                             bridge.callAttr("logout")
@@ -108,56 +105,50 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, FRAME_CHANNEL)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                    frameSink = events
-                    framePoll?.cancel(false)
-                    framePoll = poller.scheduleAtFixedRate({ emitFrames() }, 0, 250, TimeUnit.MILLISECONDS)
+                    eventSink = events
+                    eventPoll?.cancel(false)
+                    eventPoll = poller.scheduleAtFixedRate({ emitEvents() }, 0, 100, TimeUnit.MILLISECONDS)
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    frameSink = null
-                    framePoll?.cancel(false)
-                    framePoll = null
+                    eventSink = null
+                    eventPoll?.cancel(false)
+                    eventPoll = null
                 }
             })
     }
 
     private fun login(username: String, password: String, countryCode: String, region: String): String =
-        bridge.callAttr("login", username, password, countryCode, region).toJava(String::class.java)
+        bridge.callAttr("login", username, password, countryCode, region, vault.installationId).toJava(String::class.java)
 
-    private fun runBridge(result: MethodChannel.Result, block: () -> String) {
+    private fun runBridge(result: MethodChannel.Result, code: String = "LOGIN_FAILED", block: () -> Any?) {
         try {
             val cameras = block()
             mainHandler.post { result.success(cameras) }
         } catch (exception: Exception) {
-            mainHandler.post { result.error("LOGIN_FAILED", safeMessage(exception), null) }
+            mainHandler.post { result.error(code, safeMessage(exception), null) }
         }
     }
 
-    private fun emitFrames() {
-        if (frameSink == null) return
+    private fun emitEvents() {
+        if (eventSink == null) return
         try {
-            val raw = bridge.callAttr("drain_frames").asMap()
-            val frames = mutableMapOf<String, ByteArray>()
-            raw.forEach { (key, value) ->
-                val bytes = value.toJava(ByteArray::class.java)
-                frames[key.toJava(String::class.java)] = bytes
-            }
-            val rawStatuses = bridge.callAttr("stream_statuses").asMap()
-            val statuses = mutableMapOf<String, String>()
-            rawStatuses.forEach { (key, value) ->
-                statuses[key.toJava(String::class.java)] = value.toJava(String::class.java)
-            }
-            if (frames.isNotEmpty() || statuses.isNotEmpty()) {
-                mainHandler.post {
-                    frameSink?.success(mapOf("frames" to frames, "statuses" to statuses))
-                }
-            }
+            val events = bridge.callAttr("drain_events").toJava(String::class.java)
+            if (events != "[]") mainHandler.post { eventSink?.success(events) }
         } catch (_: Exception) {
-            // A stream may be starting or stopping while the frame channel polls.
+            // The activity may be stopping while the event channel polls.
         }
+    }
+
+    override fun onDestroy() {
+        eventSink = null
+        eventPoll?.cancel(false)
+        poller.shutdownNow()
+        worker.shutdown()
+        super.onDestroy()
     }
 
     private fun safeMessage(exception: Exception): String =
@@ -174,6 +165,10 @@ private data class TuyaCredentials(
 private class CredentialVault(context: android.content.Context) {
     private val preferences = context.getSharedPreferences("tuya_credentials", android.content.Context.MODE_PRIVATE)
     private val alias = "tuya_tv_credentials_v1"
+    val installationId: String = preferences.getString("installation_id", null) ?: (
+        UUID.randomUUID().toString().replace("-", "") +
+            UUID.randomUUID().toString().replace("-", "").take(12)
+    ).also { preferences.edit().putString("installation_id", it).apply() }
 
     fun save(username: String, password: String, countryCode: String, region: String) {
         val json = JSONObject()

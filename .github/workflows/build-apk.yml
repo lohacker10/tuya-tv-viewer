@@ -40,30 +40,36 @@ jobs:
       - name: Resolve Flutter packages
         run: flutter pub get
 
+      - name: Analyze Flutter
+        run: flutter analyze --no-pub
+
+      - name: Test signaling and session renewal
+        run: python -m unittest discover -s test -p 'test_*.py' -v
+
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Name and checksum APK
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.3.apk
-          sha256sum tuya-tv-viewer-v0.11.0-beta.3.apk
+          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.4.apk
+          sha256sum tuya-tv-viewer-v0.11.0-beta.4.apk
 
       - name: Save APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-viewer-v0.11.0-beta.3
-          path: tuya-tv-viewer-v0.11.0-beta.3.apk
+          name: tuya-tv-viewer-v0.11.0-beta.4
+          path: tuya-tv-viewer-v0.11.0-beta.4.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish prerelease APK
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.11.0-beta.3
-          ASSET: tuya-tv-viewer-v0.11.0-beta.3.apk
+          TAG: v0.11.0-beta.4
+          ASSET: tuya-tv-viewer-v0.11.0-beta.4.apk
         run: |
           set -euo pipefail
-          NOTES="Beta Flutter per Android TV e Fire TV: login Tuya, griglia live 2x2 e selezione a schermo intero. La beta 3 mostra per ogni telecamera lo stato P2P e il tipo dell’ultimo errore, così da diagnosticare i flussi senza condividere credenziali. Login email o telefono/password; Android 7+ e dispositivi ARMv7/ARM64. La diretta resta sperimentale: il protocollo indipendente è alpha, MJPEG è il percorso video implementato e H.264 non è verificato. Installazione con firma debug: per passare da un APK firmato diversamente può servire disinstallare la versione precedente."
+          NOTES="Beta 4: dirette H.264 via WebRTC e protocollo del portale Tuya EU. Accesso automatico con username/password e scambio interno di sessione web, senza scansione QR e senza SDK Tuya ufficiale. Griglia 2x2, schermo intero, ripresa dopo pausa e riconnessione dei flussi. Verificata dal vivo su Android 16 con quattro telecamere; Fire TV/Android TV meno recenti ancora da verificare. Flusso secondario SD per contenere il carico. Android 7+, ARMv7/ARM64. Firma debug per prove manuali."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
               gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
@@ -72,6 +78,6 @@ jobs:
             fi
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 3 Flutter" \
+              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 4 WebRTC" \
               --prerelease --notes "$NOTES"
           fi

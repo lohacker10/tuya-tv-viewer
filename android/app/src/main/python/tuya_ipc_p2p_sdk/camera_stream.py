@@ -280,7 +280,7 @@ class CameraStream:
     async def _async_run_one_session(self) -> bool:
         """Fetch a fresh config, run one session, and report whether it streamed."""
         config = await self._client.async_stream_config(self._device_id, self._local_key)
-        identity = await self._client.async_mqtt_identity()
+        identity = await self._client.async_mqtt_identity(self._device_id)
         uid = await self._client.async_uid()
         session = StreamSession(config, identity, uid, self._on_frame)
         self._session = session

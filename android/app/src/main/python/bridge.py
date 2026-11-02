@@ -1,135 +1,120 @@
-"""Small thread-safe bridge between Android and the reverse-engineered client."""
-
+"""Thread-safe Android bridge for account login and WebRTC signaling."""
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 import threading
-import time
 from typing import Any
 
+from rtc_session import RtcSession
+from portal import PortalSession
 from tuya_ipc_p2p_sdk import TuyaDevice, TuyaIpcP2pClient
 
+logging.basicConfig(level=logging.INFO)
 _loop = asyncio.new_event_loop()
-_thread = threading.Thread(target=_loop.run_forever, name="tuya-asyncio", daemon=True)
-_thread.start()
-_frames: dict[str, bytes] = {}
-_frames_lock = threading.Lock()
+threading.Thread(target=_loop.run_forever, name="tuya-asyncio", daemon=True).start()
 _client: TuyaIpcP2pClient | None = None
+_portal: PortalSession | None = None
 _cameras: dict[str, TuyaDevice] = {}
-_streams: dict[str, Any] = {}
-_stream_started_at: dict[str, float] = {}
-_pumps: list[asyncio.Task[None]] = []
+_streams: dict[str, RtcSession] = {}
+_events: queue.Queue[dict] = queue.Queue(maxsize=1024)
 
 
 def _run(coroutine: Any, timeout: float = 180) -> Any:
     return asyncio.run_coroutine_threadsafe(coroutine, _loop).result(timeout)
 
 
-async def _stop_streams() -> None:
-    global _pumps
-    for task in _pumps:
-        task.cancel()
-    for task in _pumps:
+def _emit(event: dict) -> None:
+    try:
+        _events.put_nowait(event)
+    except queue.Full:
+        logging.warning("WebRTC event queue is full")
+
+
+def drain_events() -> str:
+    events = []
+    while True:
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    _pumps = []
-    for stream in _streams.values():
-        await stream.async_stop()
+            events.append(_events.get_nowait())
+        except queue.Empty:
+            return json.dumps(events)
+
+
+async def _stop_streams() -> None:
+    sessions = list(_streams.values())
     _streams.clear()
-    _stream_started_at.clear()
-    with _frames_lock:
-        _frames.clear()
+    await asyncio.gather(*(session.close() for session in sessions), return_exceptions=True)
+    drain_events()
 
 
-async def _pump(device_id: str, stream: Any) -> None:
-    async for frame in stream.async_frames():
-        with _frames_lock:
-            _frames[device_id] = frame
+def stop_streams() -> None:
+    _run(_stop_streams())
 
 
-async def _login(username: str, password: str, country_code: str, region: str) -> str:
-    global _client, _cameras
+async def _login(username: str, password: str, country_code: str, region: str, installation_id: str) -> str:
+    global _client, _cameras, _portal
     await _stop_streams()
     if _client is not None:
         await _client.async_close()
-    _client = TuyaIpcP2pClient(username, password, country_code, region)
+    _client = TuyaIpcP2pClient(username, password, country_code, region, device_fingerprint=installation_id)
     devices = await _client.async_discover_cameras()
+    if _portal is not None: await _portal.close()
+    _portal = PortalSession()
     _cameras = {device.device_id: device for device in devices}
-    return json.dumps(
-        [
-            {"id": device.device_id, "name": device.name, "online": device.online}
-            for device in devices
-        ],
-        ensure_ascii=False,
-    )
+    return json.dumps([{"id": d.device_id, "name": d.name, "online": d.online} for d in devices], ensure_ascii=False)
 
 
-def login(username: str, password: str, country_code: str, region: str) -> str:
-    return _run(_login(username, password, country_code, region))
+def login(username: str, password: str, country_code: str, region: str, installation_id: str) -> str:
+    return _run(_login(username, password, country_code, region, installation_id))
 
 
-async def _start_streams(device_ids: list[str]) -> None:
-    await _stop_streams()
-    client = _client
-    if client is None:
+async def _prepare_stream(device_id: str) -> str:
+    if _client is None:
         raise RuntimeError("Accedi prima al tuo account Tuya")
-    # shortcut: one video client per camera; use official video support if multi-client streaming is needed.
-    for device_id in device_ids[:4]:
-        device = _cameras.get(device_id)
-        if device is None:
-            continue
-        stream = client.create_camera_stream(device.device_id, device.local_key)
-        _streams[device_id] = stream
-        _stream_started_at[device_id] = time.monotonic()
-        await stream.async_start()
-        _pumps.append(asyncio.create_task(_pump(device_id, stream)))
+    device = _cameras.get(device_id)
+    if device is None:
+        raise ValueError("Telecamera non presente nell’account")
+    previous = _streams.pop(device_id, None)
+    if previous is not None:
+        await previous.close()
+    if len(_streams) >= 4:
+        raise ValueError("Sono consentite quattro telecamere contemporanee")
+    session = RtcSession(_client, device_id, _emit, _portal)
+    try:
+        result = await session.prepare()
+    except BaseException:
+        await session.close()
+        raise
+    _streams[device_id] = session
+    return json.dumps(result)
 
 
-def start_streams(device_ids_json: str) -> None:
-    device_ids = json.loads(device_ids_json)
-    if not isinstance(device_ids, list) or any(not isinstance(item, str) for item in device_ids):
-        raise ValueError("Elenco telecamere non valido")
-    _run(_start_streams(device_ids))
+def prepare_stream(device_id: str) -> str:
+    return _run(_prepare_stream(device_id))
 
 
-def drain_frames() -> dict[str, bytes]:
-    with _frames_lock:
-        frames = dict(_frames)
-        _frames.clear()
-    return frames
+async def _rtc_signal(device_id: str, handle: str, kind: str, value: str) -> None:
+    session = _streams.get(device_id)
+    if session is None or session.handle != handle:
+        return
+    if kind not in ("offer", "candidate") or not isinstance(value, str) or not 0 < len(value) <= 131072:
+        raise ValueError("Segnale WebRTC non valido")
+    await session.signal(kind, value)
 
 
-async def _stream_statuses() -> dict[str, str]:
-    now = time.monotonic()
-    statuses = {}
-    for device_id, stream in _streams.items():
-        if stream.streaming:
-            status = "In diretta"
-        elif stream.needs_power_cycle:
-            status = "P2P rifiutato ripetutamente; chiudi altri viewer e riavvia la telecamera"
-        elif stream.last_error:
-            status = f"Errore P2P: {stream.last_error}"
-        elif now - _stream_started_at.get(device_id, now) >= 45:
-            status = "Nessun frame dopo 45 secondi"
-        else:
-            status = "Connessione P2P…"
-        statuses[device_id] = status
-    return statuses
-
-
-def stream_statuses() -> dict[str, str]:
-    return _run(_stream_statuses())
+def rtc_signal(device_id: str, handle: str, kind: str, value: str) -> None:
+    _run(_rtc_signal(device_id, handle, kind, value))
 
 
 async def _logout() -> None:
-    global _client, _cameras
+    global _client, _cameras, _portal
     await _stop_streams()
     if _client is not None:
         await _client.async_close()
+    if _portal is not None: await _portal.close()
+    _portal = None
     _client = None
     _cameras = {}
 

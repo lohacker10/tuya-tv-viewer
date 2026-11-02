@@ -4,9 +4,12 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+
+import 'rtc_feed.dart';
 
 const _backend = MethodChannel('tuya_tv/backend');
-const _frameChannel = EventChannel('tuya_tv/frames');
+const _eventChannel = EventChannel('tuya_tv/events');
 const _regions = <String, String>{
   'eu': 'Europa',
   'us': 'Stati Uniti',
@@ -38,13 +41,16 @@ class TuyaTvApp extends StatefulWidget {
   State<TuyaTvApp> createState() => _TuyaTvAppState();
 }
 
-class _TuyaTvAppState extends State<TuyaTvApp> {
+class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _countryCode = TextEditingController(text: '39');
-  final _frames = ValueNotifier<Map<String, Uint8List>>({});
+  final _feeds = ValueNotifier<Map<String, RtcFeed>>({});
+  int _generation = 0;
+  bool _active = true;
+  final _retries = <String, Timer>{};
   final _streamStatuses = ValueNotifier<Map<String, String>>({});
-  StreamSubscription<dynamic>? _frameSubscription;
+  StreamSubscription<dynamic>? _eventSubscription;
   List<CameraInfo> _cameras = const [];
   String _region = 'eu';
   String? _error;
@@ -56,6 +62,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(
       SystemChrome.setPreferredOrientations(const [
         DeviceOrientation.landscapeLeft,
@@ -65,8 +72,8 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
     unawaited(
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
     );
-    _frameSubscription = _frameChannel.receiveBroadcastStream().listen(
-      _onFrames,
+    _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
+      _onEvents,
       onError: (_) {},
     );
     _restoreLogin();
@@ -83,28 +90,86 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
     }
   }
 
-  void _onFrames(dynamic event) {
-    if (event is! Map) return;
-    final rawStatuses = event['statuses'];
-    if (rawStatuses is Map) {
-      final updatedStatuses = Map<String, String>.fromEntries(
-        rawStatuses.entries
-            .where((entry) => entry.key is String && entry.value is String)
-            .map((entry) => MapEntry(entry.key as String, entry.value as String)),
+  void _onEvents(dynamic event) {
+    if (event is! String) return;
+    final events = jsonDecode(event) as List<dynamic>;
+    for (final item in events) {
+      final feed = _feeds.value[item['id']];
+      if (feed != null && feed.handle == item['handle']) {
+        feed.receive(item['type'] as String, item['value'] as String);
+      }
+    }
+  }
+
+  void _status(String id, String status) {
+    if (mounted) _streamStatuses.value = {..._streamStatuses.value, id: status};
+  }
+
+  Future<void> _startCamera(CameraInfo camera, int generation) async {
+    if (!mounted || generation != _generation || !_active) return;
+    if (!camera.online) {
+      _status(camera.id, 'Telecamera offline');
+      return;
+    }
+    try {
+      _status(camera.id, 'Connessione WebRTC…');
+      final raw = await _backend.invokeMethod<String>(
+        'prepareStream',
+        camera.id,
       );
-      if (!mapEquals(updatedStatuses, _streamStatuses.value)) {
-        _streamStatuses.value = updatedStatuses;
+      if (!mounted || generation != _generation || !_active) return;
+      final config = jsonDecode(raw!) as Map<String, dynamic>;
+      final old = _feeds.value[camera.id];
+      if (old != null) await old.close();
+      final feed = RtcFeed(camera.id, config['handle'] as String, (value) {
+        if (generation == _generation) _status(camera.id, value);
+      }, () => _retry(camera, generation));
+      _feeds.value = {..._feeds.value, camera.id: feed};
+      await feed.start(config['iceServers'] as List<dynamic>);
+    } catch (error) {
+      if (generation == _generation && mounted) {
+        _status(
+          camera.id,
+          error is PlatformException
+              ? error.message ?? 'Connessione fallita'
+              : 'Connessione video fallita',
+        );
+        _retry(camera, generation);
       }
     }
-    final rawFrames = event['frames'];
-    if (rawFrames is! Map) return;
-    final updated = Map<String, Uint8List>.of(_frames.value);
-    for (final entry in rawFrames.entries) {
-      if (entry.key is String && entry.value is Uint8List) {
-        updated[entry.key as String] = entry.value as Uint8List;
-      }
+  }
+
+  void _retry(CameraInfo camera, int generation) {
+    if (generation != _generation || !_active || !mounted) return;
+    _retries[camera.id]?.cancel();
+    _retries[camera.id] = Timer(
+      const Duration(seconds: 8),
+      () => unawaited(_startCamera(camera, generation)),
+    );
+  }
+
+  Future<int> _stopVideo() async {
+    final generation = ++_generation;
+    for (final timer in _retries.values) {
+      timer.cancel();
     }
-    _frames.value = updated;
+    _retries.clear();
+    final feeds = _feeds.value.values.toList();
+    _feeds.value = {};
+    await Future.wait(feeds.map((feed) => feed.close()));
+    await _backend.invokeMethod<void>('stopStreams');
+    return generation;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _active = false;
+      unawaited(_stopVideo());
+    } else if (state == AppLifecycleState.resumed && !_active) {
+      _active = true;
+      if (_signedIn) unawaited(_showPage(_page));
+    }
   }
 
   void _setCameras(String json) {
@@ -152,19 +217,10 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
   }
 
   Future<void> _showPage(int page) async {
-    final start = page * 4;
-    final ids = _cameras
-        .skip(start)
-        .take(4)
-        .map((camera) => camera.id)
-        .toList();
-    try {
-      await _backend.invokeMethod<void>('startStreams', ids);
-    } on PlatformException catch (error) {
-      if (mounted)
-        setState(
-          () => _error = error.message ?? 'Avvio telecamere non riuscito.',
-        );
+    final generation = await _stopVideo();
+    for (final camera in _cameras.skip(page * 4).take(4)) {
+      if (generation != _generation || !_active || !mounted) return;
+      await _startCamera(camera, generation);
     }
   }
 
@@ -177,8 +233,8 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
   Future<void> _logout() async {
     setState(() => _loading = true);
     try {
+      await _stopVideo();
       await _backend.invokeMethod<void>('logout');
-      _frames.value = {};
       _streamStatuses.value = {};
       _username.clear();
       _password.clear();
@@ -196,8 +252,16 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
 
   @override
   void dispose() {
-    _frameSubscription?.cancel();
-    _frames.dispose();
+    _eventSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    for (final timer in _retries.values) {
+      timer.cancel();
+    }
+    for (final feed in _feeds.value.values) {
+      unawaited(feed.close());
+    }
+    unawaited(_backend.invokeMethod<void>('stopStreams'));
+    _feeds.dispose();
     _streamStatuses.dispose();
     _username.dispose();
     _password.dispose();
@@ -395,27 +459,30 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
               child: Column(
                 children: [
                   Expanded(
-                    child: GridView.builder(
-                      itemCount: visible.length,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 16,
-                            mainAxisSpacing: 16,
-                            childAspectRatio: 16 / 6.1,
-                          ),
-                      itemBuilder: (context, index) => CameraTile(
-                        camera: visible[index],
-                        frames: _frames,
-                        statuses: _streamStatuses,
-                        autofocus: index == 0,
-                        onSelected: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => CameraFullScreen(
-                              camera: visible[index],
-                              frames: _frames,
-                              statuses: _streamStatuses,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => GridView.builder(
+                        itemCount: visible.length,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                          childAspectRatio:
+                              (constraints.maxWidth - 16) /
+                              (constraints.maxHeight - 16),
+                        ),
+                        itemBuilder: (context, index) => CameraTile(
+                          camera: visible[index],
+                          feeds: _feeds,
+                          statuses: _streamStatuses,
+                          autofocus: index == 0,
+                          onSelected: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => CameraFullScreen(
+                                camera: visible[index],
+                                feeds: _feeds,
+                                statuses: _streamStatuses,
+                              ),
                             ),
                           ),
                         ),
@@ -468,7 +535,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> {
 class CameraTile extends StatelessWidget {
   const CameraTile({
     required this.camera,
-    required this.frames,
+    required this.feeds,
     required this.statuses,
     required this.onSelected,
     this.autofocus = false,
@@ -476,7 +543,7 @@ class CameraTile extends StatelessWidget {
   });
 
   final CameraInfo camera;
-  final ValueListenable<Map<String, Uint8List>> frames;
+  final ValueListenable<Map<String, RtcFeed>> feeds;
   final ValueListenable<Map<String, String>> statuses;
   final VoidCallback onSelected;
   final bool autofocus;
@@ -518,45 +585,7 @@ class CameraTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  AnimatedBuilder(
-                    animation: Listenable.merge([frames, statuses]),
-                    builder: (context, _) {
-                      final frame = frames.value[camera.id];
-                      if (frame == null)
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.videocam_off_outlined,
-                                  size: 42,
-                                  color: Colors.white38,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  statuses.value[camera.id] ??
-                                      (camera.online
-                                          ? 'Connessione P2P…'
-                                          : 'Telecamera offline'),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: Colors.white70),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      return Image.memory(
-                        frame,
-                        gaplessPlayback: true,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                      );
-                    },
-                  ),
+                  CameraVideo(camera: camera, feeds: feeds, statuses: statuses),
                   Align(
                     alignment: Alignment.bottomCenter,
                     child: Container(
@@ -608,13 +637,13 @@ class CameraTile extends StatelessWidget {
 class CameraFullScreen extends StatelessWidget {
   const CameraFullScreen({
     required this.camera,
-    required this.frames,
+    required this.feeds,
     required this.statuses,
     super.key,
   });
 
   final CameraInfo camera;
-  final ValueListenable<Map<String, Uint8List>> frames;
+  final ValueListenable<Map<String, RtcFeed>> feeds;
   final ValueListenable<Map<String, String>> statuses;
 
   @override
@@ -624,40 +653,46 @@ class CameraFullScreen extends StatelessWidget {
         title: Text(camera.name),
         leading: const Focus(autofocus: true, child: BackButton()),
       ),
-      body: Center(
-        child: AnimatedBuilder(
-          animation: Listenable.merge([frames, statuses]),
-          builder: (context, _) {
-            final frame = frames.value[camera.id];
-            if (frame == null) {
-              final status = statuses.value[camera.id] ??
-                  (camera.online
-                      ? 'Connessione P2P…'
-                      : 'Telecamera offline');
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (status == 'Connessione P2P…')
-                    const CircularProgressIndicator(),
-                  if (status != 'Connessione P2P…')
-                    const Icon(Icons.videocam_off_outlined, size: 48),
-                  const SizedBox(height: 18),
-                  Text(status, textAlign: TextAlign.center),
-                ],
-              );
-            }
-            return InteractiveViewer(
-              child: Image.memory(
-                frame,
-                gaplessPlayback: true,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) =>
-                    const Text('Immagine non disponibile'),
-              ),
-            );
-          },
-        ),
-      ),
+      body: CameraVideo(camera: camera, feeds: feeds, statuses: statuses),
     );
   }
+}
+
+class CameraVideo extends StatelessWidget {
+  const CameraVideo({
+    required this.camera,
+    required this.feeds,
+    required this.statuses,
+    super.key,
+  });
+  final CameraInfo camera;
+  final ValueListenable<Map<String, RtcFeed>> feeds;
+  final ValueListenable<Map<String, String>> statuses;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: Listenable.merge([feeds, statuses]),
+    builder: (context, _) {
+      final feed = feeds.value[camera.id];
+      final status =
+          statuses.value[camera.id] ??
+          (camera.online ? 'Connessione WebRTC…' : 'Telecamera offline');
+      if (feed == null || feed.renderer.textureId == null)
+        return Center(child: Text(status, textAlign: TextAlign.center));
+      return AnimatedBuilder(
+        animation: feed.renderer,
+        builder: (context, _) => Stack(
+          fit: StackFit.expand,
+          children: [
+            RTCVideoView(
+              feed.renderer,
+              objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+            ),
+            if (feed.renderer.videoWidth == 0)
+              Center(child: Text(status, textAlign: TextAlign.center)),
+          ],
+        ),
+      );
+    },
+  );
 }
