@@ -70,7 +70,8 @@ def login(username: str, password: str, country_code: str, region: str, installa
     return _run(_login(username, password, country_code, region, installation_id))
 
 
-async def _prepare_stream(device_id: str) -> str:
+async def _prepare_stream(device_id: str, quality: str) -> str:
+    if quality not in ("sd", "hd"): raise ValueError("Qualità video non valida")
     if _client is None:
         raise RuntimeError("Accedi prima al tuo account Tuya")
     device = _cameras.get(device_id)
@@ -81,7 +82,7 @@ async def _prepare_stream(device_id: str) -> str:
         await previous.close()
     if len(_streams) >= 4:
         raise ValueError("Sono consentite quattro telecamere contemporanee")
-    session = RtcSession(_client, device_id, _emit, _portal)
+    session = RtcSession(_client, device_id, _emit, _portal, quality)
     try:
         result = await session.prepare()
     except BaseException:
@@ -91,15 +92,15 @@ async def _prepare_stream(device_id: str) -> str:
     return json.dumps(result)
 
 
-def prepare_stream(device_id: str) -> str:
-    return _run(_prepare_stream(device_id))
+def prepare_stream(device_id: str, quality: str = "sd") -> str:
+    return _run(_prepare_stream(device_id, quality))
 
 
 async def _rtc_signal(device_id: str, handle: str, kind: str, value: str) -> None:
     session = _streams.get(device_id)
     if session is None or session.handle != handle:
         return
-    if kind not in ("offer", "candidate") or not isinstance(value, str) or not 0 < len(value) <= 131072:
+    if kind not in ("offer", "candidate", "resolution") or not isinstance(value, str) or not 0 < len(value) <= 131072:
         raise ValueError("Segnale WebRTC non valido")
     await session.signal(kind, value)
 

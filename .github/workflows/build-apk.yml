@@ -46,30 +46,33 @@ jobs:
       - name: Test signaling and session renewal
         run: python -m unittest discover -s test -p 'test_*.py' -v
 
+      - name: Test live MP4 fragments and audio clocks
+        run: dart run test/fmp4_fragments_check.dart
+
       - name: Build APK
         run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Name and checksum APK
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.4.apk
-          sha256sum tuya-tv-viewer-v0.11.0-beta.4.apk
+          cp build/app/outputs/flutter-apk/app-release.apk tuya-tv-viewer-v0.11.0-beta.5.apk
+          sha256sum tuya-tv-viewer-v0.11.0-beta.5.apk
 
       - name: Save APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tuya-tv-viewer-v0.11.0-beta.4
-          path: tuya-tv-viewer-v0.11.0-beta.4.apk
+          name: tuya-tv-viewer-v0.11.0-beta.5
+          path: tuya-tv-viewer-v0.11.0-beta.5.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish prerelease APK
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.11.0-beta.4
-          ASSET: tuya-tv-viewer-v0.11.0-beta.4.apk
+          TAG: v0.11.0-beta.5
+          ASSET: tuya-tv-viewer-v0.11.0-beta.5.apk
         run: |
           set -euo pipefail
-          NOTES="Beta 4: dirette H.264 via WebRTC e protocollo del portale Tuya EU. Accesso automatico con username/password e scambio interno di sessione web, senza scansione QR e senza SDK Tuya ufficiale. Griglia 2x2, schermo intero, ripresa dopo pausa e riconnessione dei flussi. Verificata dal vivo su Android 16 con quattro telecamere; Fire TV/Android TV meno recenti ancora da verificare. Flusso secondario SD per contenere il carico. Android 7+, ARMv7/ARM64. Firma debug per prove manuali."
+          NOTES="Beta 5: home con sole quattro anteprime a tutto schermo, bordo di selezione, navigazione tramite telecomando. Selezionando una telecamera si richiede il flusso principale HD con audio; BACK ripristina quattro stream SD silenziosi. Supporto H.264 e H.265/MP4 del portale EU, con ripristino SD se il decoder HD non riesce a riprodurre. Login automatico username/password invariato. Richiede Android 7/API 24: Fire OS 5 non è compatibile e Vega OS non esegue questo APK. Verifica su TV reale ancora necessaria. Firma debug per prove manuali."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
               gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
@@ -78,6 +81,6 @@ jobs:
             fi
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 4 WebRTC" \
+              --target "$GITHUB_SHA" --title "Tuya TV Viewer v0.11.0 beta 5 HD e audio" \
               --prerelease --notes "$NOTES"
           fi

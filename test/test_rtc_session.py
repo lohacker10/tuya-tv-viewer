@@ -20,7 +20,7 @@ class RtcSessionTest(unittest.IsolatedAsyncioTestCase):
         await session.signal('candidate', 'candidate:synthetic')
         session.moto.async_send_webrtc_candidate.assert_not_awaited()
         await session.signal('offer', 'synthetic-sdp')
-        session.moto.async_send_webrtc_offer.assert_awaited_once_with('synthetic-sdp', [], 'synthetic-auth')
+        session.moto.async_send_webrtc_offer.assert_awaited_once_with('synthetic-sdp', [], 'synthetic-auth', stream_type=1, datachannel_enable=False)
         session.moto.async_send_webrtc_candidate.assert_awaited_once_with('candidate:synthetic')
         session.on_answer('synthetic-answer')
         session.on_answer('duplicate-answer')

@@ -169,9 +169,9 @@ class PortalMoto:
                 'type': kind, 'tid': str(uuid4())}, 'msg': body}}
         await self.portal.mqtt.publish('/av/moto/' + self.moto_id + '/u/' + self.target, json.dumps(data).encode())
 
-    async def async_send_webrtc_offer(self, sdp, ice_servers, auth):
+    async def async_send_webrtc_offer(self, sdp, ice_servers, auth, stream_type=1, datachannel_enable=False):
         await self.send('offer', {'sdp': sdp, 'auth': auth, 'mode': 'webrtc',
-            'datachannel_enable': False, 'token': ice_servers, 'stream_type': 1, 'replay': {'is_replay': 0}})
+            'datachannel_enable': datachannel_enable, 'token': ice_servers, 'stream_type': stream_type, 'replay': {'is_replay': 0}})
 
     async def async_send_webrtc_candidate(self, candidate):
         if candidate and not candidate.startswith('a='): candidate = 'a=' + candidate

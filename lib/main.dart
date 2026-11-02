@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:video_player/video_player.dart';
 
 import 'rtc_feed.dart';
 
@@ -48,6 +49,10 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
   final _feeds = ValueNotifier<Map<String, RtcFeed>>({});
   int _generation = 0;
   bool _active = true;
+  CameraInfo? _fullscreenCamera;
+  bool _preferHd = true;
+  int _selected = 0;
+  final _focusNodes = List.generate(4, (_) => FocusNode());
   final _retries = <String, Timer>{};
   final _streamStatuses = ValueNotifier<Map<String, String>>({});
   StreamSubscription<dynamic>? _eventSubscription;
@@ -106,6 +111,8 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
   }
 
   Future<void> _startCamera(CameraInfo camera, int generation) async {
+    final fullscreen = _fullscreenCamera?.id == camera.id;
+    final hd = fullscreen && _preferHd;
     if (!mounted || generation != _generation || !_active) return;
     if (!camera.online) {
       _status(camera.id, 'Telecamera offline');
@@ -113,17 +120,25 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     }
     try {
       _status(camera.id, 'Connessione WebRTC…');
-      final raw = await _backend.invokeMethod<String>(
-        'prepareStream',
-        camera.id,
-      );
+      final raw = await _backend.invokeMethod<String>('prepareStream', {
+        'id': camera.id,
+        'quality': hd ? 'hd' : 'sd',
+      });
       if (!mounted || generation != _generation || !_active) return;
       final config = jsonDecode(raw!) as Map<String, dynamic>;
       final old = _feeds.value[camera.id];
       if (old != null) await old.close();
-      final feed = RtcFeed(camera.id, config['handle'] as String, (value) {
-        if (generation == _generation) _status(camera.id, value);
-      }, () => _retry(camera, generation));
+      final feed = RtcFeed(
+        camera.id,
+        config['handle'] as String,
+        (value) {
+          if (generation == _generation) _status(camera.id, value);
+        },
+        () => _retry(camera, generation, hd: hd),
+        audioEnabled: fullscreen,
+        highQuality: hd,
+        hevc: config['hevc'] == true,
+      );
       _feeds.value = {..._feeds.value, camera.id: feed};
       await feed.start(config['iceServers'] as List<dynamic>);
     } catch (error) {
@@ -134,16 +149,20 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
               ? error.message ?? 'Connessione fallita'
               : 'Connessione video fallita',
         );
-        _retry(camera, generation);
+        _retry(camera, generation, hd: hd);
       }
     }
   }
 
-  void _retry(CameraInfo camera, int generation) {
+  void _retry(CameraInfo camera, int generation, {bool hd = false}) {
     if (generation != _generation || !_active || !mounted) return;
+    if (hd) {
+      _preferHd = false;
+      debugPrint('RTC HD unavailable; restoring SD with audio');
+    }
     _retries[camera.id]?.cancel();
     _retries[camera.id] = Timer(
-      const Duration(seconds: 8),
+      Duration(seconds: hd ? 1 : 8),
       () => unawaited(_startCamera(camera, generation)),
     );
   }
@@ -168,7 +187,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
       unawaited(_stopVideo());
     } else if (state == AppLifecycleState.resumed && !_active) {
       _active = true;
-      if (_signedIn) unawaited(_showPage(_page));
+      if (_signedIn) unawaited(_showCurrent());
     }
   }
 
@@ -180,7 +199,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     _streamStatuses.value = {};
     _signedIn = true;
     _page = 0;
-    if (_cameras.isNotEmpty) unawaited(_showPage(0));
+    if (_cameras.isNotEmpty) unawaited(_showCurrent());
   }
 
   Future<void> _login() async {
@@ -216,18 +235,46 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _showPage(int page) async {
+  Future<void> _showCurrent() async {
     final generation = await _stopVideo();
-    for (final camera in _cameras.skip(page * 4).take(4)) {
+    if (generation != _generation || !_active || !mounted) return;
+    final fullscreen = _fullscreenCamera;
+    final cameras = fullscreen == null
+        ? _cameras.skip(_page * 4).take(4)
+        : [fullscreen];
+    for (final camera in cameras) {
       if (generation != _generation || !_active || !mounted) return;
       await _startCamera(camera, generation);
     }
   }
 
+  void _openCamera(CameraInfo camera, int index) {
+    _selected = index;
+    setState(() {
+      _fullscreenCamera = camera;
+      _preferHd = true;
+    });
+    unawaited(_showCurrent());
+  }
+
+  void _returnToGrid() {
+    setState(() => _fullscreenCamera = null);
+    unawaited(_showCurrent());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNodes[_selected].requestFocus();
+    });
+  }
+
   Future<void> _changePage(int page) async {
     if (page < 0 || page >= (_cameras.length / 4).ceil()) return;
-    setState(() => _page = page);
-    await _showPage(page);
+    setState(() {
+      _page = page;
+      _selected = 0;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNodes[0].requestFocus();
+    });
+    await _showCurrent();
   }
 
   Future<void> _logout() async {
@@ -266,6 +313,9 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     _username.dispose();
     _password.dispose();
     _countryCode.dispose();
+    for (final node in _focusNodes) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -286,7 +336,7 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
       home: _busy
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : _signedIn
-          ? _cameraWall()
+          ? Builder(builder: _cameraWall)
           : _loginPage(),
     );
   }
@@ -422,112 +472,105 @@ class _TuyaTvAppState extends State<TuyaTvApp> with WidgetsBindingObserver {
     );
   }
 
-  Widget _cameraWall() {
-    final pageCount = (_cameras.length / 4).ceil();
-    final first = _page * 4;
-    final visible = _cameras.skip(first).take(4).toList();
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'TUYA TV',
-          style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5),
-        ),
-        actions: [
-          if (pageCount > 1)
-            Center(
-              child: Text(
-                '${_page + 1} / $pageCount',
-                style: const TextStyle(color: Colors.white70),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Esci',
-            onPressed: _loading ? null : _logout,
-            icon: const Icon(Icons.logout),
-          ),
-          const SizedBox(width: 12),
-        ],
-      ),
-      body: _cameras.isEmpty
-          ? const Center(
-              child: Text(
-                'Nessuna telecamera Tuya compatibile trovata nell’account.',
-              ),
-            )
-          : Padding(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 18),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => GridView.builder(
-                        itemCount: visible.length,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                          childAspectRatio:
-                              (constraints.maxWidth - 16) /
-                              (constraints.maxHeight - 16),
-                        ),
-                        itemBuilder: (context, index) => CameraTile(
-                          camera: visible[index],
-                          feeds: _feeds,
-                          statuses: _streamStatuses,
-                          autofocus: index == 0,
-                          onSelected: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => CameraFullScreen(
-                                camera: visible[index],
-                                feeds: _feeds,
-                                statuses: _streamStatuses,
-                              ),
+  Widget _cameraWall(BuildContext context) {
+    final fullscreen = _fullscreenCamera;
+    final visible = _cameras.skip(_page * 4).take(4).toList();
+    return PopScope(
+      canPop: fullscreen == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _fullscreenCamera != null) _returnToGrid();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: fullscreen != null
+            ? CameraVideo(
+                camera: fullscreen,
+                feeds: _feeds,
+                statuses: _streamStatuses,
+              )
+            : Focus(
+                onKeyEvent: (_, event) {
+                  if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                  final key = event.logicalKey;
+                  if (key == LogicalKeyboardKey.contextMenu) {
+                    unawaited(
+                      showDialog<void>(
+                        context: context,
+                        builder: (context) => SimpleDialog(
+                          children: [
+                            SimpleDialogOption(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                unawaited(_showCurrent());
+                              },
+                              child: const Text('Riconnetti'),
                             ),
-                          ),
+                            SimpleDialogOption(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                unawaited(_logout());
+                              },
+                              child: const Text('Disconnetti account'),
+                            ),
+                          ],
                         ),
                       ),
+                    );
+                    return KeyEventResult.handled;
+                  }
+                  if (key == LogicalKeyboardKey.pageDown ||
+                      key == LogicalKeyboardKey.pageUp) {
+                    unawaited(
+                      _changePage(
+                        _page + (key == LogicalKeyboardKey.pageDown ? 1 : -1),
+                      ),
+                    );
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: LayoutBuilder(
+                  builder: (context, size) => GridView.builder(
+                    padding: EdgeInsets.zero,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: 4,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      childAspectRatio: size.maxWidth / size.maxHeight,
                     ),
+                    itemBuilder: (context, index) {
+                      if (index >= visible.length)
+                        return const ColoredBox(color: Colors.black);
+                      return CameraTile(
+                        camera: visible[index],
+                        feeds: _feeds,
+                        statuses: _streamStatuses,
+                        focusNode: _focusNodes[index],
+                        autofocus: index == _selected,
+                        onSelected: () => _openCamera(visible[index], index),
+                        onMove: (key) {
+                          final next = switch (key) {
+                            LogicalKeyboardKey.arrowLeft =>
+                              index % 2 == 1 ? index - 1 : index,
+                            LogicalKeyboardKey.arrowRight =>
+                              index % 2 == 0 ? index + 1 : index,
+                            LogicalKeyboardKey.arrowUp =>
+                              index >= 2 ? index - 2 : index,
+                            LogicalKeyboardKey.arrowDown =>
+                              index < 2 ? index + 2 : index,
+                            _ => index,
+                          };
+                          if (next < visible.length) {
+                            _selected = next;
+                            _focusNodes[next].requestFocus();
+                          }
+                        },
+                      );
+                    },
                   ),
-                  if (_error != null)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Color(0xffff8a80)),
-                      ),
-                    )
-                  else
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Seleziona una telecamera · BACK per tornare',
-                        style: TextStyle(color: Colors.white54),
-                      ),
-                    ),
-                  if (pageCount > 1)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        IconButton(
-                          tooltip: 'Pagina precedente',
-                          onPressed: _page > 0
-                              ? () => _changePage(_page - 1)
-                              : null,
-                          icon: const Icon(Icons.chevron_left),
-                        ),
-                        IconButton(
-                          tooltip: 'Pagina successiva',
-                          onPressed: _page + 1 < pageCount
-                              ? () => _changePage(_page + 1)
-                              : null,
-                          icon: const Icon(Icons.chevron_right),
-                        ),
-                      ],
-                    ),
-                ],
+                ),
               ),
-            ),
+      ),
     );
   }
 }
@@ -538,124 +581,80 @@ class CameraTile extends StatelessWidget {
     required this.feeds,
     required this.statuses,
     required this.onSelected,
+    required this.onMove,
+    required this.focusNode,
     this.autofocus = false,
     super.key,
   });
-
   final CameraInfo camera;
   final ValueListenable<Map<String, RtcFeed>> feeds;
   final ValueListenable<Map<String, String>> statuses;
   final VoidCallback onSelected;
+  final void Function(LogicalKeyboardKey) onMove;
+  final FocusNode focusNode;
   final bool autofocus;
 
   @override
-  Widget build(BuildContext context) {
-    return Focus(
-      autofocus: autofocus,
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            {
-              LogicalKeyboardKey.select,
-              LogicalKeyboardKey.enter,
-              LogicalKeyboardKey.numpadEnter,
-              LogicalKeyboardKey.space,
-            }.contains(event.logicalKey)) {
-          onSelected();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Builder(
-        builder: (context) {
-          final focused = Focus.of(context).hasFocus;
-          return Material(
-            color: const Color(0xff151c24),
-            shape: RoundedRectangleBorder(
-              side: BorderSide(
-                color: focused
-                    ? const Color(0xff33d6c1)
-                    : const Color(0xff26313d),
-                width: focused ? 3 : 1,
+  Widget build(BuildContext context) => Focus(
+    focusNode: focusNode,
+    autofocus: autofocus,
+    onKeyEvent: (_, event) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      final key = event.logicalKey;
+      if ({
+        LogicalKeyboardKey.select,
+        LogicalKeyboardKey.enter,
+        LogicalKeyboardKey.numpadEnter,
+        LogicalKeyboardKey.space,
+      }.contains(key)) {
+        onSelected();
+        return KeyEventResult.handled;
+      }
+      if ({
+        LogicalKeyboardKey.arrowLeft,
+        LogicalKeyboardKey.arrowRight,
+        LogicalKeyboardKey.arrowUp,
+        LogicalKeyboardKey.arrowDown,
+      }.contains(key)) {
+        onMove(key);
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    },
+    child: Builder(
+      builder: (context) => Semantics(
+        label: camera.name,
+        button: true,
+        selected: Focus.of(context).hasFocus,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onSelected,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CameraVideo(
+                camera: camera,
+                feeds: feeds,
+                statuses: statuses,
+                cover: true,
               ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: onSelected,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  CameraVideo(camera: camera, feeds: feeds, statuses: statuses),
-                  Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      color: Colors.black.withValues(alpha: 0.66),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            size: 9,
-                            color: camera.online
-                                ? const Color(0xff54e39a)
-                                : Colors.grey,
-                          ),
-                          const SizedBox(width: 9),
-                          Expanded(
-                            child: Text(
-                              camera.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          const Icon(
-                            Icons.open_in_full,
-                            size: 17,
-                            color: Colors.white70,
-                          ),
-                        ],
+              if (Focus.of(context).hasFocus)
+                IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: const Color(0xff33d6c1),
+                        width: 4,
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          );
-        },
+                ),
+            ],
+          ),
+        ),
       ),
-    );
-  }
-}
-
-class CameraFullScreen extends StatelessWidget {
-  const CameraFullScreen({
-    required this.camera,
-    required this.feeds,
-    required this.statuses,
-    super.key,
-  });
-
-  final CameraInfo camera;
-  final ValueListenable<Map<String, RtcFeed>> feeds;
-  final ValueListenable<Map<String, String>> statuses;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(camera.name),
-        leading: const Focus(autofocus: true, child: BackButton()),
-      ),
-      body: CameraVideo(camera: camera, feeds: feeds, statuses: statuses),
-    );
-  }
+    ),
+  );
 }
 
 class CameraVideo extends StatelessWidget {
@@ -663,33 +662,61 @@ class CameraVideo extends StatelessWidget {
     required this.camera,
     required this.feeds,
     required this.statuses,
+    this.cover = false,
     super.key,
   });
   final CameraInfo camera;
   final ValueListenable<Map<String, RtcFeed>> feeds;
   final ValueListenable<Map<String, String>> statuses;
+  final bool cover;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: Listenable.merge([feeds, statuses]),
     builder: (context, _) {
       final feed = feeds.value[camera.id];
-      final status =
-          statuses.value[camera.id] ??
-          (camera.online ? 'Connessione WebRTC…' : 'Telecamera offline');
-      if (feed == null || feed.renderer.textureId == null)
-        return Center(child: Text(status, textAlign: TextAlign.center));
+      final status = statuses.value[camera.id] ?? 'Connessione…';
+      Widget placeholder() => Semantics(
+        label: status,
+        child: Center(
+          child:
+              camera.online &&
+                  !status.toLowerCase().contains('fallit') &&
+                  !status.contains('non ')
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.videocam_off_outlined, color: Colors.white38),
+        ),
+      );
+      if (feed == null) return placeholder();
       return AnimatedBuilder(
-        animation: feed.renderer,
+        animation: Listenable.merge([feed.renderer, feed]),
         builder: (context, _) => Stack(
           fit: StackFit.expand,
           children: [
-            RTCVideoView(
-              feed.renderer,
-              objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-            ),
-            if (feed.renderer.videoWidth == 0)
-              Center(child: Text(status, textAlign: TextAlign.center)),
+            if (feed.hevcFeed?.controller?.value.isInitialized == true)
+              FittedBox(
+                fit: cover ? BoxFit.cover : BoxFit.contain,
+                child: SizedBox(
+                  width: feed.hevcFeed!.controller!.value.size.width,
+                  height: feed.hevcFeed!.controller!.value.size.height,
+                  child: VideoPlayer(feed.hevcFeed!.controller!),
+                ),
+              )
+            else if (!feed.hevc && feed.renderer.textureId != null)
+              RTCVideoView(
+                feed.renderer,
+                objectFit: cover
+                    ? RTCVideoViewObjectFit.RTCVideoViewObjectFitCover
+                    : RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+              ),
+            if (feed.hevc
+                ? feed.hevcFeed?.controller?.value.isInitialized != true
+                : feed.renderer.videoWidth == 0)
+              placeholder(),
           ],
         ),
       );

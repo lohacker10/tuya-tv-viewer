@@ -3,6 +3,7 @@ package it.codex.tuya_tv_cameras
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import android.util.Base64
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
@@ -36,6 +37,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
         bridge = Python.getInstance().getModule("bridge")
         vault = CredentialVault(applicationContext)
@@ -73,10 +75,12 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "prepareStream" -> {
-                        val id = call.arguments as? String
-                        if (id.isNullOrBlank()) result.error("INVALID_CAMERA", "Telecamera non valida", null)
+                        val args = call.arguments as? Map<*, *>
+                        val id = args?.get("id") as? String
+                        val quality = args?.get("quality") as? String
+                        if (id.isNullOrBlank() || quality !in listOf("sd", "hd")) result.error("INVALID_CAMERA", "Telecamera non valida", null)
                         else worker.execute { runBridge(result, "STREAM_START") {
-                            bridge.callAttr("prepare_stream", id).toJava(String::class.java)
+                            bridge.callAttr("prepare_stream", id, quality).toJava(String::class.java)
                         } }
                     }
                     "rtcSignal" -> {

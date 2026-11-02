@@ -1,7 +1,7 @@
 name: tuya_tv_cameras
 description: App Android TV per le telecamere Tuya.
 publish_to: none
-version: 0.11.0-beta.4+14
+version: 0.11.0-beta.5+15
 
 environment:
   sdk: ^3.11.1
@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_webrtc: 1.6.3
+  video_player: 2.11.1
 
 flutter:
   uses-material-design: true
